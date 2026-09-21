@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { completions, frequency, inFrequencyList } from "@/lib/freq";
 import { jevConfigured, jevDecide, JevError, type JevQuestion } from "@/lib/jev";
 import { resolveLang } from "@/lib/lang";
-import { getSpeller } from "@/lib/spell";
+import { detectLangByDictionary, getSpeller } from "@/lib/spell";
 import { thresholds } from "@/lib/thresholds";
 import { COMMON_TYPOS, editDistance, shouldSkip, transferCase, type Lang } from "@/lib/text";
 import { loadLibrary, lookup } from "@/lib/library";
@@ -100,6 +100,10 @@ export async function POST(req: Request) {
         otherSpeller ??= await getSpeller(other);
         foreign = otherSpeller.correct(bare) || otherSpeller.correct(bare.toLowerCase());
       }
+    }
+    if (foreign) {
+      const local = await detectLangByDictionary(t.left.slice(-90), 12);
+      if (local.lang === other) foreign = false;
     }
     if (foreign) {
       out.typos.push({ id: t.id, replace: false, foreign: true }); // client asks /api/decide for a translation

@@ -15,8 +15,12 @@ class SettingsActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
         fun label(t: String) = TextView(this).apply { text = t; textSize = 13f; setPadding(0, pad / 2, 0, 4) }
         root.addView(TextView(this).apply { text = "Inline Autocorrect"; textSize = 22f })
-        root.addView(label("1. Enable the keyboard, 2. pick it as the current keyboard, then type anywhere. Corrections appear as chips above the keys; tap a chip to revert it."))
-        root.addView(Button(this).apply { text = "Enable keyboard (system settings)"; setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } })
+        root.addView(label("Recommended: the spell checker. It works with your normal keyboard. Settings → System → Languages → Spell checker (on some builds: Keyboard → Spell checker) → choose Inline Autocorrect. Typos are underlined red, wrong words in context blue; tap a word to accept the suggestion."))
+        root.addView(Button(this).apply { text = "Open spell checker settings"; setOnClickListener {
+            try { startActivity(Intent("android.settings.SPELL_CHECKER_SETTINGS")) } catch (e: Exception) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+        } })
+        root.addView(label("Optional: the keyboard, which corrects automatically while you type (like the desktop app). Enable it, then pick it from the keyboard switcher."))
+        root.addView(Button(this).apply { text = "Enable keyboard"; setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } })
         root.addView(Button(this).apply { text = "Choose keyboard"; setOnClickListener { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() } })
         root.addView(Switch(this).apply { text = "Autocorrect on"; isChecked = prefs.enabled; setOnCheckedChangeListener { _, v -> prefs.enabled = v } })
         root.addView(label("Aggressiveness"))

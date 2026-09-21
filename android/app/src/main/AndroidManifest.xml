@@ -14,6 +14,14 @@
             <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/method" />
         </service>
+        <service
+            android:name=".AutocorrectSpellChecker"
+            android:label="Inline Autocorrect spell checker"
+            android:permission="android.permission.BIND_TEXT_SERVICE"
+            android:exported="true">
+            <intent-filter><action android:name="android.service.textservice.SpellCheckerService" /></intent-filter>
+            <meta-data android:name="android.view.textservice.scs" android:resource="@xml/spellchecker" />
+        </service>
         <activity android:name=".SettingsActivity" android:exported="true" android:label="Inline Autocorrect">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

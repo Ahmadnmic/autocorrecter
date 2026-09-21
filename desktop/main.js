@@ -5,6 +5,8 @@ const fs = require("node:fs");
 const { Engine } = require("./engine.js");
 const { makeTyper } = require("./typer.js");
 const { checkForUpdate, onLibraryRelease } = require("./updater.js");
+const { detectLayout } = require("./keymap.js");
+const { makeKeyHandler } = require("./hook.js");
 
 const API_BASE = process.env.ICA_API_BASE || "https://inline-autocorrect.vercel.app";
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json");
@@ -19,6 +21,10 @@ const changes = []; // newest first, {id, old, to, kind, at, reverted}
 const stats = { applied: 0, reverted: 0, jev: 0 };
 let uiohook = null;
 let UiohookKey = null;
+let layout = "us";
+let keyEvents = 0;
+const startedAt = Date.now();
+let lastKeyAt = 0;
 
 function loadSettings() {
   try {
@@ -99,7 +105,7 @@ function openSettings() {
   settingsWin.on("closed", () => (settingsWin = null));
 }
 function pushState() {
-  const state = { settings, changes: changes.slice(0, 80), stats, hook: hookStarted, permissions: permissionState(), platform: process.platform, api: API_BASE, version: app.getVersion(), library: engine ? { count: engine.library.count, version: engine.library.version } : null };
+  const state = { settings, changes: changes.slice(0, 80), stats, hook: hookStarted, permissions: permissionState(), platform: process.platform, api: API_BASE, version: app.getVersion(), library: engine ? { count: engine.library.count, version: engine.library.version } : null, keyEvents, lastKeyAt, layout, startedAt };
   if (settingsWin) settingsWin.webContents.send("state", state);
   return state;
 }
@@ -119,19 +125,23 @@ function startHook() {
     dialog.showErrorBox("Keyboard hook unavailable", `The keyboard listener could not be loaded on this platform.\n${e.message}`);
     return false;
   }
-  const RESET_KEYS = new Set([UiohookKey.Enter, UiohookKey.Tab, UiohookKey.Escape, UiohookKey.ArrowLeft, UiohookKey.ArrowRight, UiohookKey.ArrowUp, UiohookKey.ArrowDown, UiohookKey.Home, UiohookKey.End, UiohookKey.PageUp, UiohookKey.PageDown, UiohookKey.Delete]);
-  uiohook.on("keydown", (e) => {
-    if (engine.applying) return; // our own synthetic keystrokes
-    const mod = e.ctrlKey || e.metaKey || (e.altKey && process.platform !== "win32");
-    if (mod) return engine.reset("modifier");
-    if (e.keycode === UiohookKey.Backspace) return engine.backspace();
-    if (RESET_KEYS.has(e.keycode)) return engine.reset("navigation");
-    if (e.keychar && e.keychar >= 32) engine.char(String.fromCodePoint(e.keychar));
+  const handler = makeKeyHandler({
+    engine,
+    UiohookKey,
+    getLayout: () => layout,
+    onEvent: () => {
+      keyEvents++;
+      lastKeyAt = Date.now();
+    },
   });
+  uiohook.on("keydown", handler);
   uiohook.on("mousedown", () => engine.reset("click"));
   try {
     uiohook.start();
     hookStarted = true;
+    const refreshLayout = () => detectLayout().then((l) => (layout = l));
+    refreshLayout();
+    setInterval(refreshLayout, 15_000);
   } catch (e) {
     dialog.showErrorBox("Keyboard hook failed", e.message);
     return false;

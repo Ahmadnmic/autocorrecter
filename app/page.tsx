@@ -19,6 +19,9 @@ type LogEv = { kind: string; old?: string; to?: string; changeKind?: string; lan
 const logQueue: LogEv[] = [];
 let logTimer: ReturnType<typeof setTimeout> | null = null;
 function logClient(ev: LogEv) {
+  const scrub = (t?: string) => (t ?? "").replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "<email>").replace(/\S*\d\S*\d\S*/g, "<num>").replace(/\S{20,}/g, "<long>");
+  if (/@/.test(ev.old ?? "") || /@/.test(ev.to ?? "")) return;
+  ev = { ...ev, left: scrub(ev.left), right: scrub(ev.right) };
   logQueue.push(ev);
   if (logTimer) return;
   logTimer = setTimeout(() => {

@@ -48,6 +48,11 @@ class Engine {
   }
 
   logClient(ev) {
+    // Never log context that could hold credentials: scrub e-mails and long digit/symbol tokens locally.
+    const scrub = (t) => String(t || "").replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "<email>").replace(/\S*\d\S*\d\S*/g, "<num>").replace(/\S{20,}/g, "<long>");
+    if (ev.left) ev.left = scrub(ev.left);
+    if (ev.right) ev.right = scrub(ev.right);
+    if (/@/.test(ev.old || "") || /@/.test(ev.to || "")) return;
     this.logQueue.push(ev);
     if (this.logTimer) return;
     this.logTimer = setTimeout(() => {
@@ -86,10 +91,21 @@ class Engine {
     this.afterBoundary(ch);
   }
 
+  /** True while the buffer looks like a credential or identifier rather than prose: one token, no spaces. */
+  looksLikeSecret() {
+    const b = this.buf;
+    if (b.includes(" ")) return false;
+    return /[@\d]/.test(b) || (/[^\p{L}\s'’-]/u.test(b) && b.length > 3);
+  }
+
   afterBoundary(ch) {
     if (text.isWordChar(ch)) return;
+    // Nothing is checked until the field clearly holds prose: a space must have been typed, or the boundary is a space.
+    if (ch !== " " && !this.buf.includes(" ")) return;
+    if (this.looksLikeSecret()) return;
     const w = text.wordEndingAt(this.buf, this.buf.length - 1);
     if (!w) return;
+    if (/@/.test(w.word) || /@/.test(this.buf.slice(Math.max(0, w.start - 2), w.end + 2))) return; // e-mail addresses
     this.onCommit(w);
   }
 

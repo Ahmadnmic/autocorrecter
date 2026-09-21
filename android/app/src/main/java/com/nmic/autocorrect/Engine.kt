@@ -181,7 +181,12 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         return true
     }
 
+    private fun scrub(t: String) = t.replace(Regex("[\\w.+-]+@[\\w-]+\\.[\\w.-]+"), "<email>").replace(Regex("\\S*\\d\\S*\\d\\S*"), "<num>").replace(Regex("\\S{20,}"), "<long>")
+
     private fun log(ev: JSONObject) {
+        if (ev.optString("old").contains("@") || ev.optString("to").contains("@")) return
+        if (ev.has("left")) ev.put("left", scrub(ev.optString("left")))
+        if (ev.has("right")) ev.put("right", scrub(ev.optString("right")))
         logQueue.add(ev)
         if (logScheduled) return
         logScheduled = true

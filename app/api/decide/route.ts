@@ -1,6 +1,6 @@
 // Pass A: typo fix for the word just committed. Local Hunspell candidates, Jev picks.
 import { NextResponse } from "next/server";
-import { getSpeller } from "@/lib/spell";
+import { detectLangByDictionary, getSpeller } from "@/lib/spell";
 import { resolveLang } from "@/lib/lang";
 import { inFrequencyList } from "@/lib/freq";
 import { logEvent, scrub } from "@/lib/log";
@@ -49,6 +49,11 @@ export async function POST(req: Request) {
     if (!isForeign && bare.length >= 2 && (other === "da" ? /[æøå]/i.test(bare) : true)) {
       const otherSpeller = await getSpeller(other);
       isForeign = otherSpeller.correct(bare) || otherSpeller.correct(bare.toLowerCase());
+    }
+    // The writer may have switched language mid-text: if the last few words are in the other language, leave it.
+    if (isForeign) {
+      const local = await detectLangByDictionary(left.slice(-90), 12);
+      if (local.lang === other) isForeign = false;
     }
     if (isForeign) {
       try {

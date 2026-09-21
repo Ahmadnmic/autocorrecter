@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<spell-checker xmlns:android="http://schemas.android.com/apk/res/android"
+    android:label="Inline Autocorrect"
+    android:settingsActivity="com.nmic.autocorrect.SettingsActivity">
+    <subtype android:label="English" android:subtypeLocale="en" />
+    <subtype android:label="Dansk" android:subtypeLocale="da" />
+</spell-checker>
