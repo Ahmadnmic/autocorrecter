@@ -164,7 +164,8 @@ kbd { font-family: inherit; font-size: 12px; border: 1px solid var(--line); bord
 
 /* download dropdown */
 .dl { position: relative; }
-.dlbtn { border: 0; background: var(--blue); color: #fff; border-radius: 16px; padding: 7px 14px; font-size: 13px; white-space: nowrap; }
+.dlbtn { border: 0; background: var(--blue); color: #fff; border-radius: 18px; padding: 8px 16px; font-size: 14px; font-weight: 600; white-space: nowrap; box-shadow: 0 2px 8px rgba(26,115,232,.35); }
+.dlbtn.big { padding: 12px 20px; font-size: 15px; border-radius: 22px; }
 .dlbtn:hover { background: #1765cc; }
 .dlmenu { position: absolute; right: 0; top: calc(100% + 8px); background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); width: 320px; padding: 6px; z-index: 40; }
 .dlmenu.inline { position: static; width: auto; box-shadow: none; padding: 0; border: 0; margin-bottom: 8px; }
@@ -174,3 +175,13 @@ kbd { font-family: inherit; font-size: 12px; border: 1px solid var(--line); bord
 .dlmenu small { color: var(--muted); font-size: 11px; }
 .dlmenu p { padding: 6px 10px 4px; margin: 0; line-height: 1.4; }
 @media (max-width: 1100px) { .dl { display: none; } }
+
+/* bottom nudge */
+.nudge { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); width: min(560px, calc(100% - 24px)); background: #202124; color: #fff; border-radius: 14px; padding: 14px 44px 14px 18px; display: flex; align-items: center; gap: 16px; box-shadow: 0 12px 32px rgba(0,0,0,.35); z-index: 45; animation: nudge-in .35s ease-out; }
+.nudge .muted { color: #bdc1c6; }
+.nudge-body { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.nudge-actions { flex: none; }
+.nudge-x { position: absolute; top: 6px; right: 8px; width: 30px; height: 30px; border: 0; background: transparent; color: #bdc1c6; font-size: 20px; border-radius: 50%; }
+.nudge-x:hover { background: #3c4043; color: #fff; }
+@keyframes nudge-in { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (max-width: 700px) { .nudge { flex-direction: column; align-items: stretch; padding-right: 18px; } .nudge-actions .dlbtn { width: 100%; } }

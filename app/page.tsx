@@ -118,6 +118,22 @@ export default function Page() {
   const libraryRef = useRef<Library | null>(null);
   const [release, setRelease] = useState<Release | null>(null);
   const [dlOpen, setDlOpen] = useState(false);
+  const [nudge, setNudge] = useState(false);
+  const nudgeShownRef = useRef(false);
+  const showNudge = () => {
+    if (nudgeShownRef.current) return;
+    try {
+      if (localStorage.getItem("ica_nudge_dismissed") === new Date().toISOString().slice(0, 10)) return;
+    } catch {}
+    nudgeShownRef.current = true;
+    setNudge(true);
+  };
+  const dismissNudge = () => {
+    setNudge(false);
+    try {
+      localStorage.setItem("ica_nudge_dismissed", new Date().toISOString().slice(0, 10));
+    } catch {}
+  };
   const [aggr, setAggr] = useState(0.5);
   const [langMode, setLangMode] = useState<"auto" | Lang>("auto");
   const [tone, setTone] = useState<Tone>("as-written");
@@ -185,6 +201,7 @@ export default function Page() {
         })
         .catch(() => setHealth(null));
     load(true);
+    const nudgeTimer = setTimeout(showNudge, 10_000);
     const loadLibrary = () => fetch("/api/library").then((r) => r.json()).then((l: Library) => (libraryRef.current = l)).catch(() => {});
     const loadRelease = () => fetch("/api/desktop-version").then((r) => r.json()).then(setRelease).catch(() => {});
     loadLibrary();
@@ -201,6 +218,7 @@ export default function Page() {
       clearInterval(iv);
       clearInterval(iw);
       clearInterval(il);
+      clearTimeout(nudgeTimer);
     };
   }, []);
   useEffect(() => {
@@ -693,6 +711,7 @@ export default function Page() {
       if (!d.running || !taRef.current) return;
       if (i >= script.length) {
         stopDemo();
+        setTimeout(showNudge, 1500);
         return;
       }
       const item = script[i++];
@@ -916,6 +935,18 @@ export default function Page() {
         </aside>
       </main>
 
+      {nudge && (
+        <div className="nudge" role="dialog" aria-label="Download the app">
+          <button className="nudge-x" onClick={dismissNudge} aria-label="Close">×</button>
+          <div className="nudge-body">
+            <b>Get this everywhere you type.</b>
+            <span className="muted small">Same corrections, chips and settings as here, in every app on your computer or phone.</span>
+          </div>
+          <div className="nudge-actions">
+            <button className="dlbtn big" onClick={() => { setDlOpen(true); dismissNudge(); window.scrollTo({ top: 0, behavior: "smooth" }); }}>⤓ Download the app</button>
+          </div>
+        </div>
+      )}
       {showWelcome && (
         <div className="modal-bg" onClick={dismissWelcome}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="wt" onClick={(e) => e.stopPropagation()}>
@@ -964,7 +995,7 @@ function DownloadMenu({ release, onClose, inline }: { release: Release | null; o
         );
       })}
       <p className="muted small">
-        macOS: unzip, then double-click <b>Open me first if macOS says damaged.command</b> once (it clears the download quarantine and opens the app; the app is not notarised). Then allow Accessibility and Input Monitoring when asked. Windows: unzip and run the exe.
+        macOS (the app is not notarised): unzip, open the app once and dismiss the warning, then System Settings → Privacy &amp; Security → scroll down → <b>Open Anyway</b>. Then allow Accessibility and Input Monitoring when asked. Windows: unzip and run the exe (SmartScreen: More info → Run anyway).
         {release?.library ? ` Library: ${release.library.count} learned corrections.` : ""}
       </p>
     </div>

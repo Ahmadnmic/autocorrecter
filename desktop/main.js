@@ -252,3 +252,11 @@ ipcMain.handle("retryHook", () => {
   return pushState();
 });
 ipcMain.handle("openWeb", () => shell.openExternal(API_BASE));
+ipcMain.handle("feedback", async (_e, text, contact) => {
+  try {
+    const r = await fetch(`${API_BASE}/api/feedback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: String(text).slice(0, 2000), contact: String(contact ?? "").slice(0, 120), platform: `${process.platform}-${process.arch}`, version: app.getVersion() }) });
+    return r.ok;
+  } catch {
+    return false;
+  }
+});

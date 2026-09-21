@@ -31,6 +31,11 @@ h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute
     <label class="row"><span>On-screen chips</span><select id="overlay"><option value="1">Show</option><option value="0">Hide</option></select></label>
     <label class="row"><span>Chip corner</span><select id="corner"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option></select></label>
   </div>
+  <div class="card"><h2>Request a feature</h2>
+    <textarea id="fr" rows="3" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:6px;padding:8px" placeholder="What should the autocorrect do better? Describe it in a sentence or two."></textarea>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="frc" style="flex:1;font:inherit;border:1px solid var(--line);border-radius:6px;padding:6px" placeholder="Your name or e-mail (optional)"><button id="frs" class="revert" style="border-color:var(--blue);color:var(--blue)">Send</button></div>
+    <p id="frm" class="hint"></p>
+  </div>
   <div class="card"><h2>Activity</h2><dl class="stats"><dt>Changes applied / reverted</dt><dd id="s1"></dd><dt>Keyboard listener</dt><dd id="s2"></dd><dt>API</dt><dd id="s3"></dd><dt>App version</dt><dd id="s4"></dd><dt>Learned corrections</dt><dd id="s5"></dd></dl>
   <p class="hint" style="margin-top:8px">Corrections are typed into the focused app as Backspaces plus the fixed text. Passwords and code: turn the system off first. <button class="link" id="web">Open web preview</button></p></div>
 </main>
@@ -49,6 +54,7 @@ $('sys').onclick=async()=>{const st=await ica.state();await ica.set('enabled',!s
 $('aggr').oninput=e=>{$('aggrv').textContent=Math.round(e.target.value*100);ica.set('aggressiveness',Number(e.target.value))};
 $('lang').onchange=e=>ica.set('lang',e.target.value);$('overlay').onchange=e=>ica.set('overlay',e.target.value==='1');$('corner').onchange=e=>ica.set('overlayCorner',e.target.value);
 $('web').onclick=()=>ica.openWeb();
+$('frs').onclick=async()=>{const t=$('fr').value.trim();if(t.length<3){$('frm').textContent='Write a little more first.';return;}$('frs').disabled=true;const ok=await ica.feedback(t,$('frc').value.trim());$('frs').disabled=false;$('frm').textContent=ok?'Sent. Thank you! It lands in the improvement inbox.':'Could not send right now. Try again later.';if(ok)$('fr').value='';};
 document.body.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.id){await ica.revert(b.dataset.id)}else if(b.dataset.perm){ica.openPermissions(b.dataset.perm)}else if(b.id==='retry'){render(await ica.retryHook())}});
 ica.onState(render);ica.state().then(render);setInterval(()=>ica.state().then(render),3000);
 </script></body></html>
