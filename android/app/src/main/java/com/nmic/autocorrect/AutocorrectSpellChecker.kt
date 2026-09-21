@@ -33,7 +33,9 @@ class AutocorrectSpellChecker : SpellCheckerService() {
             return textInfos.map { ti ->
                 val text = ti.text ?: ""
                 val words = Regex("[\\p{L}\\p{M}'’\\-]+").findAll(text).filter { it.value.length >= 2 }.toList()
-                if (words.isEmpty() || !prefs.enabled) return@map SentenceSuggestionsInfo(arrayOf(), intArrayOf(), intArrayOf())
+                // The system never sends password, e-mail, URL or "no suggestions" fields here, but a sentence that has no
+                // spaces or looks like a token/credential is skipped as well.
+                if (words.isEmpty() || !prefs.enabled || TextUtil.looksLikeSecret(text)) return@map SentenceSuggestionsInfo(arrayOf(), intArrayOf(), intArrayOf())
                 val lang = if (prefs.lang == "auto") "auto" else prefs.lang
                 val typos = JSONArray(); val recheck = JSONArray()
                 val confAll = TextUtil.confusables

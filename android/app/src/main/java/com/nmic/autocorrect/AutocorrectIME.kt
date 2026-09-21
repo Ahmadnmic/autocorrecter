@@ -43,6 +43,14 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         keyboard = KeyboardView(this, this)
         root.addView(scroll)
         root.addView(keyboard)
+        // Edge-to-edge (Android 15+): the IME window no longer stops above the navigation bar, so the bottom row
+        // would sit under it. Pad the root by the navigation-bar inset whenever the system reports one.
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val bottom = if (android.os.Build.VERSION.SDK_INT >= 30) insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom else insets.systemWindowInsetBottom
+            v.setPadding(0, 0, 0, bottom)
+            insets
+        }
+        window?.window?.navigationBarColor = Color.parseColor("#E8EAED")
         renderStrip()
         return root
     }
@@ -51,9 +59,15 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         super.onStartInputView(info, restarting)
         val variation = (info?.inputType ?: 0) and InputType.TYPE_MASK_VARIATION
         val cls = (info?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
+        val inputType = info?.inputType ?: 0
+        val imeOptions = info?.imeOptions ?: 0
+        // Never read or send text from credential-like fields: passwords, numbers, e-mail, URLs, person names,
+        // phone numbers, fields that ask for no suggestions, and fields flagged "no personalized learning" (incognito).
         secureField = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD || variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
             variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD || variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD || cls == InputType.TYPE_CLASS_NUMBER ||
-            variation == InputType.TYPE_TEXT_VARIATION_URI || variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS || variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+            cls == InputType.TYPE_CLASS_PHONE || variation == InputType.TYPE_TEXT_VARIATION_PERSON_NAME || variation == InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_URI || variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS || variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
+            (inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0 || (imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
         updateShift()
         if (::strip.isInitialized) renderStrip()
     }

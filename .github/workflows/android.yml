@@ -40,5 +40,5 @@ jobs:
         with:
           tag_name: android-v0.1.${{ github.run_number }}
           name: Android keyboard 0.1.${{ github.run_number }}
-          body: "Inline Autocorrect keyboard for Android 10+ (GrapheneOS). Install the APK, enable the keyboard under Settings → System → Keyboard, then pick it."
+          body: "Inline Autocorrect for Android 10+ (GrapheneOS). Install the APK, then enable the spell checker under Settings → System → Languages → Spell checker (works with the stock keyboard). The optional keyboard is enabled under Settings → System → Keyboard."
           files: android/inline-autocorrect.apk

@@ -45,8 +45,21 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
     private fun rows() = if (sym) symbols else letters
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
+    /**
+     * Same geometry as the stock (AOSP/GrapheneOS) keyboard: the key area is 205.6dp, but never less than 61.8% of
+     * the screen width and never more than 46% of the screen height (portrait); 176dp / 45% of the height in landscape.
+     */
+    fun keyboardHeightPx(): Int {
+        val dm = resources.displayMetrics
+        val landscape = dm.widthPixels > dm.heightPixels
+        val default = if (landscape) dp(176f) else dp(205.6f)
+        val max = dm.heightPixels * 0.46f
+        val min = if (landscape) dm.heightPixels * 0.45f else dm.widthPixels * 0.618f
+        return kotlin.math.max(kotlin.math.min(default, max), min).toInt()
+    }
+
     override fun onMeasure(w: Int, h: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(w), dp(210f).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(w), keyboardHeightPx())
     }
 
     override fun onDraw(c: Canvas) {
@@ -54,15 +67,17 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
         rects.clear()
         val rows = rows()
         val rowH = height / rows.size.toFloat()
-        val gap = dp(3f)
-        paintText.textSize = dp(19f)
+        // Stock keyboard gaps: 6.127% of the keyboard height vertically, 1.917% of the width horizontally.
+        val vGap = height * 0.06127f / 2f
+        val gap = width * 0.01917f / 2f
+        paintText.textSize = dp(21f)
         for ((ri, row) in rows.withIndex()) {
             val totalW = row.sumOf { it.weight.toDouble() }.toFloat()
             var x = gap
             val unit = (width - gap * (row.size + 1)) / totalW
             for (k in row) {
                 val w = unit * k.weight
-                val r = RectF(x, ri * rowH + gap, x + w, (ri + 1) * rowH - gap)
+                val r = RectF(x, ri * rowH + vGap, x + w, (ri + 1) * rowH - vGap)
                 val special = k.code.length > 1 && k.code != " "
                 c.drawRoundRect(r, dp(6f), dp(6f), if (special) paintSpecial else paintKey)
                 var label = k.label

@@ -18,7 +18,7 @@ android {
     defaultConfig {
         applicationId = "com.nmic.autocorrect"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 34 // 35 forces the IME window edge-to-edge on Android 15, putting the bottom row under the navigation bar
         versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
         versionName = System.getenv("VERSION_NAME") ?: "0.1.0"
     }
@@ -35,7 +35,9 @@ android {
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (!ksB64.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
         }
     }

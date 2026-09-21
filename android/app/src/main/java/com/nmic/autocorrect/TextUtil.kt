@@ -26,6 +26,14 @@ object TextUtil {
         return out
     }
 
+    /** A single token with digits or symbols, or anything with an e-mail/URL in it: treated as a credential, never sent. */
+    fun looksLikeSecret(text: String): Boolean {
+        val t = text.trim()
+        if (Regex("[\\w.+-]+@[\\w-]+\\.[\\w.-]+|https?://", RegexOption.IGNORE_CASE).containsMatchIn(t)) return true
+        if (t.contains(' ')) return false
+        return Regex("[\\p{N}@#$%^&*_=/\\\\]").containsMatchIn(t) || t.length > 24
+    }
+
     fun shouldSkip(word: String): Boolean {
         if (word.length < 2) return true
         if (Regex("^[\\p{Lu}\\p{N}\\-']+$").matches(word) && Regex("\\p{Lu}").containsMatchIn(word)) return true
