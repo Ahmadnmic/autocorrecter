@@ -1,5 +1,6 @@
 // Pass A: typo fix for the word just committed. Local Hunspell candidates, Jev picks.
 import { NextResponse } from "next/server";
+import { num, rateLimit, readJson, spendBudget, str, word as wordOf, NO_STORE } from "@/lib/guard";
 import { detectLangByDictionary, getSpeller } from "@/lib/spell";
 import { resolveLang } from "@/lib/lang";
 import { inFrequencyList } from "@/lib/freq";
@@ -16,15 +17,16 @@ type Body = { word: string; left: string; doc?: string; lang?: Lang | "auto"; ag
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
-  }
-  const word = String(body.word ?? "").trim();
-  const left = String(body.left ?? "").slice(-400);
-  const T = thresholds(body.aggressiveness ?? 0.5);
+  const limited = rateLimit(req, "decide", 120, 60);
+  if (limited) return limited;
+  const over = spendBudget(2);
+  if (over) return over;
+  const parsed = await readJson<Body>(req);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
+  const word = wordOf(body.word);
+  const left = str(body.left, 400);
+  const T = thresholds(num(body.aggressiveness, 0, 1, 0.5));
   if (!word || shouldSkip(word)) return NextResponse.json({ replace: false, why: "skipped" });
 
   // Document language: explicit from settings, otherwise the dictionary that most recent words belong to.
@@ -146,7 +148,7 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const err = e as JevError;
-    return NextResponse.json({ replace: false, why: "jev_error", detail: err.message, status: err.status ?? 502, ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200 });
+    return NextResponse.json({ replace: false, why: "jev_error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });
   }
 }
 

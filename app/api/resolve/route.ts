@@ -6,6 +6,7 @@ import { anthropicConfigured, anthropicKey, HaikuError } from "@/lib/haiku";
 import { thresholds } from "@/lib/thresholds";
 import { transferCase, type Lang } from "@/lib/text";
 import { logEvent, scrub } from "@/lib/log";
+import { arr, id, num, rateLimit, readJson, spendBudget, str, strHead, word, NO_STORE } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,17 +33,20 @@ const SCHEMA = {
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
-  }
-  const items = (Array.isArray(body.items) ? body.items : []).filter((i) => i && i.id && i.word).slice(0, 6);
+  const limited = rateLimit(req, "resolve", 30, 15);
+  if (limited) return limited;
+  const over = spendBudget(5);
+  if (over) return over;
+  const parsed = await readJson<Body>(req);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
+  const items: Item[] = arr<Partial<Item>>(body.items, 6)
+    .map((i) => ({ id: id(i?.id), word: word(i?.word), left: str(i?.left, 300), right: strHead(i?.right, 200) }))
+    .filter((i) => i.id && i.word);
   if (!items.length) return NextResponse.json({ decisions: [] });
   if (!anthropicConfigured()) return NextResponse.json({ decisions: [], why: "not_configured" }, { status: 503 });
   const lang: Lang = body.lang === "da" ? "da" : "en";
-  const T = thresholds(body.aggressiveness ?? 0.5);
+  const T = thresholds(num(body.aggressiveness, 0, 1, 0.5));
 
   // 1. Haiku: what did the writer mean?
   const list = items.map((i) => `id=${i.id}\nbefore: …${i.left.slice(-160)}\nword: ${i.word}\nafter: ${i.right.slice(0, 120)}…`).join("\n\n");
@@ -74,11 +78,12 @@ export async function POST(req: Request) {
     const text = ((json.content as Array<{ type: string; text?: string }>) ?? []).find((c) => c.type === "text")?.text ?? "{}";
     proposals = (JSON.parse(text) as { items?: typeof proposals }).items ?? [];
   } catch (e) {
-    return NextResponse.json({ decisions: [], why: "haiku_error", detail: (e as Error).message, ms: Date.now() - t0 }, { status: 200 });
+    void e;
+    return NextResponse.json({ decisions: [], why: "haiku_error", ms: Date.now() - t0 }, { status: 200, headers: NO_STORE });
   }
   const usable = items
     .map((i) => ({ item: i, p: proposals.find((p) => p.id === i.id) }))
-    .filter((x): x is { item: Item; p: { id: string; replacement: string; sure: boolean } } => !!x.p && x.p.sure && !!x.p.replacement.trim() && x.p.replacement.trim().toLowerCase() !== x.item.word.toLowerCase() && x.p.replacement.trim().split(/\s+/).length <= 3);
+    .filter((x): x is { item: Item; p: { id: string; replacement: string; sure: boolean } } => !!x.p && x.p.sure && typeof x.p.replacement === "string" && !!x.p.replacement.trim() && x.p.replacement.length <= 48 && !/[\r\n<>]/.test(x.p.replacement) && x.p.replacement.trim().toLowerCase() !== x.item.word.toLowerCase() && x.p.replacement.trim().split(/\s+/).length <= 3);
   if (!usable.length) return NextResponse.json({ decisions: [], ms: Date.now() - t0 });
 
   // 2. Jev gate.
@@ -98,10 +103,10 @@ export async function POST(req: Request) {
       return { id: item.id, replace, to: replace ? transferCase(item.word, p.replacement.trim()) : undefined, confidence: conf };
     });
     logEvent({ route: "resolve", ms: Date.now() - t0, lang, in: items.map((i) => ({ word: scrub(i.word), left: scrub(i.left).slice(-80), right: scrub(i.right).slice(0, 60) })), out: { proposals: proposals.map((p) => ({ id: p.id, replacement: scrub(p.replacement), sure: p.sure })), decisions } });
-    return NextResponse.json({ decisions, ms: Date.now() - t0 });
+    return NextResponse.json({ decisions, ms: Date.now() - t0 }, { headers: NO_STORE });
   } catch (e) {
     const err = e as JevError;
     logEvent({ route: "resolve", ms: Date.now() - t0, lang, in: items.map((i) => scrub(i.word)), out: { why: "jev_error" } });
-    return NextResponse.json({ decisions: [], why: "jev_error", detail: err.message, ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : 200 });
+    return NextResponse.json({ decisions: [], why: "jev_error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : 200, headers: NO_STORE });
   }
 }

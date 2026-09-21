@@ -4,7 +4,8 @@
 // Nothing enters the library from a single observation, a reverted correction vetoes promotion, and Haiku is
 // only called when there are candidates, on a compact list, with a tiny output schema.
 import { NextResponse } from "next/server";
-import { list, put } from "@vercel/blob";
+import { checkCron } from "@/lib/guard";
+import { delPrivate, listPrivate, privateEnabled, putPrivate, readPrivateJson } from "@/lib/store";
 import { anthropicConfigured, anthropicKey } from "@/lib/haiku";
 import { loadLibrary, saveLibrary, type Library } from "@/lib/library";
 import type { LogEvent } from "@/lib/log";
@@ -19,16 +20,27 @@ type State = { cursor: string; lastReleaseCount: number; runs: number };
 
 type Agg = { to: Record<string, number>; reverts: number; lang: string; kinds: Set<string>; contexts: string[] };
 
+const LOG_RETENTION_DAYS = 14;
 async function loadState(): Promise<State> {
-  try {
-    const { blobs } = await list({ prefix: STATE_PATH, limit: 1 });
-    if (!blobs.length) return { cursor: "", lastReleaseCount: 0, runs: 0 };
-    return (await (await fetch(blobs[0].url, { cache: "no-store" })).json()) as State;
-  } catch {
-    return { cursor: "", lastReleaseCount: 0, runs: 0 };
-  }
+  return (await readPrivateJson<State>(STATE_PATH)) ?? { cursor: "", lastReleaseCount: 0, runs: 0 };
 }
-const saveState = (s: State) => put(STATE_PATH, JSON.stringify(s), { access: "public", addRandomSuffix: false, contentType: "application/json", allowOverwrite: true });
+const saveState = (s: State) => putPrivate(STATE_PATH, JSON.stringify(s), { overwrite: true });
+
+/** Delete event logs older than the retention window. Runs a bounded amount of work per cron tick. */
+async function pruneOldLogs(): Promise<number> {
+  const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86400_000).toISOString().slice(0, 10);
+  let removed = 0;
+  for (let i = LOG_RETENTION_DAYS; i <= LOG_RETENTION_DAYS + 20; i++) {
+    const day = new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10);
+    if (day > cutoff) continue;
+    const page = await listPrivate({ prefix: `logs/${day}/`, limit: 1000 });
+    if (!page.blobs.length) continue;
+    await delPrivate(page.blobs.map((b) => b.url));
+    removed += page.blobs.length;
+    if (removed >= 3000) break;
+  }
+  return removed;
+}
 
 async function readClientEvents(sinceIso: string, max = 3000): Promise<{ events: LogEvent[]; newest: string }> {
   const days = new Set<string>();
@@ -39,10 +51,10 @@ async function readClientEvents(sinceIso: string, max = 3000): Promise<{ events:
   for (const day of days) {
     let cursor: string | undefined;
     do {
-      const page = await list({ prefix: `logs/${day}/`, limit: 1000, cursor });
+      const page = await listPrivate({ prefix: `logs/${day}/`, limit: 1000, cursor });
       cursor = page.hasMore ? page.cursor : undefined;
       const wanted = page.blobs.filter((b) => /-client(-[A-Za-z0-9]+)?\.json$/.test(b.pathname) && b.uploadedAt.toISOString() > sinceIso);
-      const bodies = await Promise.all(wanted.slice(0, max - events.length).map((b) => fetch(b.url).then((r) => r.json()).catch(() => null)));
+      const bodies = await Promise.all(wanted.slice(0, max - events.length).map((b) => readPrivateJson<LogEvent>(b.url)));
       for (const [i, ev] of bodies.entries()) {
         if (!ev) continue;
         events.push(ev as LogEvent);
@@ -86,9 +98,9 @@ async function vetWithHaiku(cands: { typed: string; to: string; n: number; lang:
 
 export async function GET(req: Request) {
   const t0 = Date.now();
-  const auth = req.headers.get("authorization");
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return NextResponse.json({ error: "no_blob" }, { status: 503 });
+  const denied = checkCron(req);
+  if (denied) return denied;
+  if (!privateEnabled()) return NextResponse.json({ error: "no_blob" }, { status: 503 });
 
   const state = await loadState();
   const lib = await loadLibrary(0);
@@ -153,7 +165,8 @@ export async function GET(req: Request) {
   state.runs += 1;
   await saveState(state);
 
-  const summary = { events: events.length, candidates: cands.length, added, neverCount: lib.never.length, libraryCount: lib.count, libraryVersion: lib.version, release, ms: Date.now() - t0 };
-  await put(`logs/learn/${new Date().toISOString().slice(0, 13)}.json`, JSON.stringify({ ...summary, at: new Date().toISOString(), rejected: cands.filter((c) => !verdicts[c.typed]?.ok).map((c) => ({ typed: c.typed, to: c.to, note: verdicts[c.typed]?.note })) }), { access: "public", addRandomSuffix: true, contentType: "application/json" }).catch(() => {});
+  const pruned = await pruneOldLogs().catch(() => 0);
+  const summary = { events: events.length, candidates: cands.length, added, neverCount: lib.never.length, libraryCount: lib.count, libraryVersion: lib.version, release, pruned, ms: Date.now() - t0 };
+  await putPrivate(`logs/learn/${new Date().toISOString().slice(0, 13)}.json`, JSON.stringify({ ...summary, at: new Date().toISOString(), rejected: cands.filter((c) => !verdicts[c.typed]?.ok).map((c) => ({ typed: c.typed, to: c.to, note: verdicts[c.typed]?.note })) })).catch(() => {});
   return NextResponse.json(summary);
 }

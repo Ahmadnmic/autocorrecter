@@ -6,6 +6,7 @@ import { thresholds } from "@/lib/thresholds";
 import { nthWordOccurrence, transferCase, type Lang } from "@/lib/text";
 import { isSlop } from "@/lib/slop";
 import { logEvent, scrub } from "@/lib/log";
+import { num, rateLimit, readJson, spendBudget, str, NO_STORE } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,15 +16,16 @@ const TONES = new Set(["as-written", "neutral", "formal", "professional", "casua
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
-  }
-  const window = String(body.window ?? "").slice(-1200);
+  const limited = rateLimit(req, "propose", 30, 15);
+  if (limited) return limited;
+  const over = spendBudget(5);
+  if (over) return over;
+  const parsed = await readJson<Body>(req);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
+  const window = str(body.window, 1200);
   const lang: Lang = body.lang === "da" ? "da" : "en";
-  const T = thresholds(body.aggressiveness ?? 0.5);
+  const T = thresholds(num(body.aggressiveness, 0, 1, 0.5));
   const tone = TONES.has(String(body.tone)) ? String(body.tone) : "as-written";
   const toneNote = tone === "as-written" ? "" : ` The author wants a ${tone} tone; a single word that clearly clashes with that tone also counts.`;
   if (window.trim().split(/\s+/).length < 4) return NextResponse.json({ approved: [], why: "too_short" });
@@ -47,7 +49,8 @@ export async function POST(req: Request) {
     const proposals = await proposeImprovements(window, lang, tone);
     // Hard anti-slop filter: no banned alternative ever reaches the gate, whatever the model said.
     const located = proposals
-      .map((p) => ({ ...p, alternatives: p.alternatives.filter((a) => !isSlop(a)), offset: nthWordOccurrence(window, p.original, p.occurrence) }))
+      // Model output is untrusted: alternatives must be short plain text, never line breaks or markup.
+      .map((p) => ({ ...p, alternatives: p.alternatives.filter((a) => typeof a === "string" && a.length <= 40 && !/[\r\n<>]/.test(a) && !isSlop(a)), offset: nthWordOccurrence(window, p.original, p.occurrence) }))
       .filter((p) => p.offset >= 0 && p.alternatives.length > 0);
     if (located.length === 0) return NextResponse.json({ approved: [], why: "no_proposals", worth, ms: Date.now() - t0 });
 
@@ -80,9 +83,9 @@ export async function POST(req: Request) {
       })
       .filter((x): x is NonNullable<typeof x> => !!x);
     logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone }, out: { worth, proposed: located.map((p) => ({ original: scrub(p.original), alternatives: p.alternatives, category: p.category, reason: p.reason })), approved } });
-    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0 });
+    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0 }, { headers: NO_STORE });
   } catch (e) {
     const err = e as JevError | HaikuError;
-    return NextResponse.json({ approved: [], why: "error", detail: err.message, ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200 });
+    return NextResponse.json({ approved: [], why: "error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });
   }
 }

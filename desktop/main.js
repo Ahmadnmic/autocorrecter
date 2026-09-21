@@ -4,13 +4,35 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { Engine } = require("./engine.js");
 const { makeTyper } = require("./typer.js");
-const { checkForUpdate, onLibraryRelease } = require("./updater.js");
+const { checkForUpdate, onLibraryRelease, offerMoveToApplications } = require("./updater.js");
 const { detectLayout } = require("./keymap.js");
 const { makeKeyHandler } = require("./hook.js");
 
 const API_BASE = process.env.ICA_API_BASE || "https://inline-autocorrect.vercel.app";
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json");
 const defaults = { enabled: true, aggressiveness: 0.5, lang: "auto", overlay: true, overlayCorner: "bottom-right" };
+// Settings the renderer may change, with their validators. Anything else is ignored.
+const SETTING_RULES = {
+  enabled: (v) => typeof v === "boolean",
+  aggressiveness: (v) => typeof v === "number" && v >= 0 && v <= 1,
+  lang: (v) => ["auto", "en", "da"].includes(v),
+  overlay: (v) => typeof v === "boolean",
+  overlayCorner: (v) => ["bottom-right", "bottom-left", "top-right", "top-left"].includes(v),
+  firstRun: (v) => typeof v === "boolean",
+};
+const UI_DIR = path.join(__dirname, "ui");
+const WEB_PREFS = { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false, navigateOnDragDrop: false };
+/** IPC is only accepted from our own two pages (top frame, loaded from the app's ui folder). */
+function trustedSender(e) {
+  const f = e.senderFrame;
+  if (!f || f.parent !== null) return false;
+  try {
+    const u = new URL(f.url);
+    return u.protocol === "file:" && path.resolve(decodeURIComponent(u.pathname)).startsWith(UI_DIR + path.sep);
+  } catch {
+    return false;
+  }
+}
 let settings = { ...defaults };
 let tray = null;
 let settingsWin = null;
@@ -28,7 +50,9 @@ let lastKeyAt = 0;
 
 function loadSettings() {
   try {
-    settings = { ...defaults, ...JSON.parse(fs.readFileSync(SETTINGS_FILE(), "utf8")) };
+    const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE(), "utf8"));
+    settings = { ...defaults };
+    for (const [k, rule] of Object.entries(SETTING_RULES)) if (rule(raw?.[k])) settings[k] = raw[k];
   } catch {}
 }
 function saveSettings() {
@@ -53,7 +77,7 @@ function ensureOverlay() {
     skipTaskbar: true,
     hasShadow: false,
     show: false,
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true },
+    webPreferences: WEB_PREFS,
   });
   overlayWin.setIgnoreMouseEvents(true);
   overlayWin.setAlwaysOnTop(true, "screen-saver");
@@ -98,7 +122,7 @@ function openSettings() {
     minimizable: false,
     fullscreenable: false,
     show: false,
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true },
+    webPreferences: WEB_PREFS,
   });
   settingsWin.loadFile(path.join(__dirname, "ui", "settings.html"));
   settingsWin.once("ready-to-show", () => settingsWin.show());
@@ -168,6 +192,7 @@ function refreshTray() {
   tray.setToolTip(`Inline Autocorrect · ${settings.enabled ? "on" : "off"}`);
 }
 function setSetting(key, value) {
+  if (!SETTING_RULES[key] || !SETTING_RULES[key](value)) return;
   settings[key] = value;
   saveSettings();
   refreshTray();
@@ -176,6 +201,14 @@ function setSetting(key, value) {
 }
 
 // ---------- app ----------
+// Renderer hardening: our pages never navigate, never open windows, never get web-platform permissions.
+app.on("web-contents-created", (_e, contents) => {
+  contents.on("will-navigate", (e) => e.preventDefault());
+  contents.on("will-attach-webview", (e) => e.preventDefault());
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  contents.session.setPermissionCheckHandler(() => false);
+});
 app.whenReady().then(async () => {
   loadSettings();
   if (process.platform === "darwin") app.dock?.hide();
@@ -189,10 +222,12 @@ app.whenReady().then(async () => {
   });
   tray.on("double-click", openSettings);
 
+  const typer = makeTyper();
   engine = new Engine({
     apiBase: API_BASE,
     settings: () => ({ enabled: settings.enabled, aggressiveness: settings.aggressiveness, lang: settings.lang }),
-    apply: makeTyper(),
+    apply: typer,
+    secureField: typer.secureField,
     onChange: (c) => {
       const entry = { id: `${Date.now().toString(36)}${changes.length}`, ...c, at: Date.now(), reverted: false };
       changes.unshift(entry);
@@ -218,6 +253,8 @@ app.whenReady().then(async () => {
     openSettings();
     setSetting("firstRun", false);
   }
+  // Running from Downloads (macOS App Translocation) or an opened zip: offer to move to Applications so updates work.
+  setTimeout(() => offerMoveToApplications().catch(() => {}), 2500);
 });
 app.on("window-all-closed", (e) => e.preventDefault());
 app.whenReady().then(() => {
@@ -231,12 +268,18 @@ app.on("before-quit", () => {
 });
 
 // ---------- IPC ----------
-ipcMain.handle("state", () => pushState());
-ipcMain.handle("set", (_e, key, value) => {
-  setSetting(key, value);
+ipcMain.handle("state", (e) => {
+  const ok = trustedSender(e);
+  if (process.env.ICA_DEBUG) console.log("ipc state", ok ? "trusted" : "REJECTED", e.senderFrame?.url);
+  return ok ? pushState() : null;
+});
+ipcMain.handle("set", (e, key, value) => {
+  if (!trustedSender(e)) return null;
+  setSetting(String(key), value);
   return settings;
 });
-ipcMain.handle("revert", async (_e, id) => {
+ipcMain.handle("revert", async (e, id) => {
+  if (!trustedSender(e)) return false;
   const c = changes.find((x) => x.id === id);
   if (!c || c.reverted) return false;
   const idx = engine.changes.findIndex((x) => x.old === c.old && x.to === c.to && engine.buf.slice(x.start, x.end) === x.to);
@@ -252,17 +295,19 @@ ipcMain.handle("revert", async (_e, id) => {
   }
   return ok;
 });
-ipcMain.handle("openPermissions", (_e, which) => {
-  if (process.platform !== "darwin") return;
+ipcMain.handle("openPermissions", (e, which) => {
+  if (!trustedSender(e) || process.platform !== "darwin") return;
   const pane = which === "input" ? "Privacy_ListenEvent" : "Privacy_Accessibility";
   shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
 });
-ipcMain.handle("retryHook", () => {
+ipcMain.handle("retryHook", (e) => {
+  if (!trustedSender(e)) return null;
   startHook();
   return pushState();
 });
-ipcMain.handle("openWeb", () => shell.openExternal(API_BASE));
-ipcMain.handle("feedback", async (_e, text, contact) => {
+ipcMain.handle("openWeb", (e) => trustedSender(e) && shell.openExternal(API_BASE));
+ipcMain.handle("feedback", async (e, text, contact) => {
+  if (!trustedSender(e) || typeof text !== "string") return false;
   try {
     const r = await fetch(`${API_BASE}/api/feedback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: String(text).slice(0, 2000), contact: String(contact ?? "").slice(0, 120), platform: `${process.platform}-${process.arch}`, version: app.getVersion() }) });
     return r.ok;

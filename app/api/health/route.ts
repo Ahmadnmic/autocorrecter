@@ -1,6 +1,7 @@
 // Reports whether the two API keys are set and whether a minimal live call succeeds.
 import { NextResponse } from "next/server";
-import { jevConfigured, jevDecide, jevEndpointName, jevKeyHint, jevLimited, jevProbe } from "@/lib/jev";
+import { jevConfigured, jevDecide, jevEndpointName, jevLimited } from "@/lib/jev";
+import { checkSecret, rateLimit, NO_STORE } from "@/lib/guard";
 import { anthropicConfigured } from "@/lib/haiku";
 import { anthropicKey } from "@/lib/env";
 import { getSpeller } from "@/lib/spell";
@@ -8,12 +9,15 @@ import { getSpeller } from "@/lib/spell";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Status = { configured: boolean; ok: boolean; note: string; ms?: number; shape?: unknown; keyHint?: string; probes?: unknown };
+type Status = { configured: boolean; ok: boolean; note: string; ms?: number; shape?: unknown };
 let cached: { at: number; body: unknown } | null = null;
 
 export async function GET(req: Request) {
-  const force = new URL(req.url).searchParams.get("force") === "1";
-  if (cached && !force && Date.now() - cached.at < 60_000) return NextResponse.json(cached.body);
+  const limited = rateLimit(req, "health", 30, 10);
+  if (limited) return limited;
+  // Live probes cost model calls and reveal upstream details: admin only.
+  const force = new URL(req.url).searchParams.get("force") === "1" && !checkSecret(req, "ADMIN_SECRET");
+  if (cached && !force && Date.now() - cached.at < 60_000) return NextResponse.json(cached.body, { headers: NO_STORE });
 
   const spell: Status = { configured: true, ok: false, note: "" };
   try {
@@ -41,8 +45,6 @@ export async function GET(req: Request) {
       jev.shape = a.wrong_word.raw;
     } catch (e) {
       jev.note = `live call failed: ${(e as Error).message}`;
-      jev.keyHint = jevKeyHint();
-      jev.probes = await jevProbe();
     }
   }
 
@@ -70,5 +72,5 @@ export async function GET(req: Request) {
 
   const body = { spell, jev: { ...jev, host: jevEndpointName(), limited: jevLimited() }, anthropic, region: process.env.VERCEL_REGION ?? "local", build: process.env.NEXT_PUBLIC_BUILD ?? "", at: new Date().toISOString() };
   cached = { at: Date.now(), body };
-  return NextResponse.json(body);
+  return NextResponse.json(body, { headers: NO_STORE });
 }

@@ -1,6 +1,7 @@
 // Autocomplete: frequency-list candidates for the partial word, Jev picks with context.
 // Applied instantly by the client only at confidence >= 0.95.
 import { NextResponse } from "next/server";
+import { rateLimit, readJson, spendBudget, str, word, NO_STORE } from "@/lib/guard";
 import { completions, frequency } from "@/lib/freq";
 import { jevConfigured, jevDecide, JevError } from "@/lib/jev";
 import { resolveLang } from "@/lib/lang";
@@ -14,14 +15,15 @@ type Body = { partial: string; left: string; lang?: string };
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
-  }
-  const partial = String(body.partial ?? "").trim();
-  const left = String(body.left ?? "").slice(-400);
+  const limited = rateLimit(req, "complete", 240, 120);
+  if (limited) return limited;
+  const over = spendBudget(1);
+  if (over) return over;
+  const parsed = await readJson<Body>(req);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
+  const partial = word(body.partial, 32);
+  const left = str(body.left, 400);
   if (partial.length < 3 || shouldSkip(partial)) return NextResponse.json({ complete: false, why: "too_short" });
   if (!jevConfigured()) return NextResponse.json({ complete: false, why: "jev_not_configured" }, { status: 503 });
 
@@ -59,6 +61,6 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const err = e as JevError;
-    return NextResponse.json({ complete: false, why: "jev_error", detail: err.message, ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200 });
+    return NextResponse.json({ complete: false, why: "jev_error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });
   }
 }

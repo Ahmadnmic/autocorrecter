@@ -1,10 +1,22 @@
 {
-  "version": "0.1.2",
-  "notes": "0.1.2: fixes the keyboard listener on macOS and Windows (characters were not being read), adds Danish/US layout support, key counter in Settings, credential protection, feature requests.",
+  "version": "0.1.3",
+  "notes": "0.1.3: verified updates (signed manifest, checksums), installs to Applications when run from Downloads, hardened app (fuses, sandbox, CSP), Windows password-field detection.",
   "assets": {
-    "darwin-arm64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.2-mac-apple-silicon.zip",
-    "darwin-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.2-mac-intel.zip",
-    "win32-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.2-windows-x64.zip",
+    "darwin-arm64": {
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.3-mac-apple-silicon.zip",
+      "sha256": "445ea19e7c5aac6f007ffa974dbefcedf6fa05771671158776e9d21161116cd0",
+      "size": 127230891
+    },
+    "darwin-x64": {
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.3-mac-intel.zip",
+      "sha256": "fc0c5ab62893d2e887799a15bb2ab992dd68c06faac02795899fd9041def0bfc",
+      "size": 134217681
+    },
+    "win32-x64": {
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.3-windows-x64.zip",
+      "sha256": "5bbbea264ba64dbfad836fd45d6f0550f2f51d912f34fd2d1075f8f6cdd91e84",
+      "size": 158636755
+    },
     "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }
 }

@@ -1,5 +1,6 @@
 // Pass B: re-check recent words now that right-context exists. Jev only, all items in one request.
 import { NextResponse } from "next/server";
+import { arr, id, num, rateLimit, readJson, spendBudget, str, strHead, word, NO_STORE } from "@/lib/guard";
 import { jevConfigured, jevDecide, JevError } from "@/lib/jev";
 import { thresholds } from "@/lib/thresholds";
 import { transferCase, type Lang } from "@/lib/text";
@@ -12,16 +13,19 @@ type Body = { items: Item[]; lang?: Lang; aggressiveness?: number };
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
-  }
-  const items = (Array.isArray(body.items) ? body.items : []).slice(0, 4).filter((it) => it && it.word && Array.isArray(it.alternatives) && it.alternatives.length > 0);
+  const limited = rateLimit(req, "recheck", 120, 60);
+  if (limited) return limited;
+  const over = spendBudget(1);
+  if (over) return over;
+  const parsed = await readJson<Body>(req);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
+  const items: Item[] = arr<Partial<Item>>(body.items, 4)
+    .map((it) => ({ ...it, id: id(it?.id), word: word(it?.word), alternatives: arr<unknown>(it?.alternatives, 3).map((a) => word(a)).filter(Boolean), left: str(it?.left, 300), right: strHead(it?.right, 200) }) as Item)
+    .filter((it) => it.word && it.alternatives.length > 0);
   if (items.length === 0) return NextResponse.json({ decisions: [] });
   if (!jevConfigured()) return NextResponse.json({ decisions: [], why: "jev_not_configured", missing: ["JEV_API_KEY"] }, { status: 503 });
-  const T = thresholds(body.aggressiveness ?? 0.5);
+  const T = thresholds(num(body.aggressiveness, 0, 1, 0.5));
   const lang: Lang = body.lang === "da" ? "da" : "en";
 
   const state: Record<string, unknown> = {
@@ -49,6 +53,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ decisions, ms: Date.now() - t0 });
   } catch (e) {
     const err = e as JevError;
-    return NextResponse.json({ decisions: [], why: "jev_error", detail: err.message, ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200 });
+    return NextResponse.json({ decisions: [], why: "jev_error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });
   }
 }

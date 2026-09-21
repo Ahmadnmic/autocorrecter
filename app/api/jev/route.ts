@@ -9,6 +9,7 @@ import { thresholds } from "@/lib/thresholds";
 import { COMMON_TYPOS, editDistance, shouldSkip, transferCase, type Lang } from "@/lib/text";
 import { loadLibrary, lookup } from "@/lib/library";
 import { logEvent, scrub } from "@/lib/log";
+import { arr, id, num, oneOf, rateLimit, readJson, spendBudget, str, strHead, word, NO_STORE } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,12 +34,26 @@ type Body = {
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "bad_json" }, { status: 400 });
-  }
+  const limited = rateLimit(req, "jev", 240, 120);
+  if (limited) return limited;
+  const over = spendBudget(1);
+  if (over) return over;
+  const parsed = await readJson<Body>(req);
+  if ("error" in parsed) return parsed.error;
+  let body = parsed.body;
+  // Coerce every client field to a bounded value before anything reads it.
+  body = {
+    lang: oneOf(body.lang, ["auto", "en", "da"] as const, "auto"),
+    doc: str(body.doc, 20000, "") || undefined,
+    client: strHead(body.client, 16, "web"),
+    session: strHead(body.session, 32, ""),
+    aggressiveness: num(body.aggressiveness, 0, 1, 0.5),
+    tone: oneOf(body.tone, ["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"] as const, "as-written"),
+    complete: body.complete && typeof body.complete === "object" ? { partial: word(body.complete.partial, 32), left: str(body.complete.left, 400) } : undefined,
+    typos: arr<{ id: unknown; word: unknown; left: unknown }>(body.typos, 10).map((t) => ({ id: id(t?.id), word: word(t?.word), left: str(t?.left, 400) })),
+    recheck: arr<{ id: unknown; word: unknown; alternatives: unknown; left: unknown; right: unknown; completed?: unknown }>(body.recheck, 8).map((r) => ({ id: id(r?.id), word: word(r?.word), alternatives: arr<unknown>(r?.alternatives, 3).map((a) => word(a)).filter(Boolean), left: str(r?.left, 300), right: strHead(r?.right, 200), completed: r?.completed === true })),
+    prefilter: body.prefilter && typeof body.prefilter === "object" ? { window: str(body.prefilter.window, 900) } : undefined,
+  };
   const T = thresholds(body.aggressiveness ?? 0.5);
   const tone = body.tone ?? "as-written";
   const longestLeft = [body.complete?.left, ...(body.typos ?? []).map((t) => t.left), ...(body.recheck ?? []).map((r) => r.left)].filter(Boolean).sort((a, b) => (b?.length ?? 0) - (a?.length ?? 0))[0] ?? "";
@@ -168,7 +183,7 @@ export async function POST(req: Request) {
 
   const finish = (payload: Record<string, unknown>, status = 200) => {
     logEvent({ route: "jev", ms: Date.now() - t0, lang, client: body.client, session: body.session, in: { complete: body.complete?.partial, typos: (body.typos ?? []).map((t) => scrub(t.word)), recheck: (body.recheck ?? []).map((r) => scrub(r.word)), prefilter: !!body.prefilter, tone }, out: { complete: out.complete, typos: out.typos, recheck: out.recheck, prefilter: out.prefilter, why: payload.why } });
-    return NextResponse.json(payload, { status });
+    return NextResponse.json(payload, { status, headers: NO_STORE });
   };
   if (Object.keys(questions).length === 0) return finish({ ...out, ms: Date.now() - t0 });
   if (!jevConfigured()) return NextResponse.json({ ...out, why: "jev_not_configured" }, { status: 503 });
@@ -271,6 +286,6 @@ export async function POST(req: Request) {
     return finish({ ...out, ms: Date.now() - t0 });
   } catch (e) {
     const err = e as JevError;
-    return finish({ ...out, why: "jev_error", detail: err.message, ms: Date.now() - t0 }, err.status === 429 ? 429 : err.status === 503 ? 503 : 200);
+    return finish({ ...out, why: "jev_error", ms: Date.now() - t0 }, err.status === 429 ? 429 : err.status === 503 ? 503 : 200);
   }
 }

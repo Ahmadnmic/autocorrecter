@@ -17,6 +17,9 @@ class Engine {
    */
   constructor(o) {
     this.apply = o.apply;
+    /** Optional: async () => boolean, true when the focused control is a password field (Windows UI Automation). */
+    this.secureField = o.secureField || null;
+    this.secureKnown = null; // null = not asked for this field yet
     this.apiBase = o.apiBase.replace(/\/$/, "");
     this.settings = o.settings;
     this.onChange = o.onChange || (() => {});
@@ -69,6 +72,7 @@ class Engine {
     this.version++;
     this.unresolved.clear();
     this.changes = [];
+    this.secureKnown = null;
   }
 
   /** A printable character was typed. */
@@ -103,9 +107,21 @@ class Engine {
     // Nothing is checked until the field clearly holds prose: a space must have been typed, or the boundary is a space.
     if (ch !== " " && !this.buf.includes(" ")) return;
     if (this.looksLikeSecret()) return;
+    if (this.secureKnown) return;
     const w = text.wordEndingAt(this.buf, this.buf.length - 1);
     if (!w) return;
     if (/@/.test(w.word) || /@/.test(this.buf.slice(Math.max(0, w.start - 2), w.end + 2))) return; // e-mail addresses
+    // First word in a field: ask the OS whether this is a password control before anything leaves the buffer.
+    if (this.secureField && this.secureKnown === null) {
+      const version = this.version;
+      this.secureField().then((secure) => {
+        this.secureKnown = !!secure;
+        if (secure) return this.reset("secure field");
+        if (this.version === version && this.buf.slice(w.start, w.end) === w.word) this.onCommit(w);
+      }).catch(() => {});
+      return;
+    }
+    if (this.secureKnown) return;
     this.onCommit(w);
   }
 

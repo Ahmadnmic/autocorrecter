@@ -2,11 +2,14 @@
 import { NextResponse } from "next/server";
 import { getSpeller } from "@/lib/spell";
 import { completions } from "@/lib/freq";
+import { checkCron } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = checkCron(req);
+  if (denied) return denied;
   const t0 = Date.now();
   // Danish Hunspell is loaded lazily (only for Danish text), so warming it here would cost seconds for nothing.
   await Promise.all([getSpeller("en"), completions("th", "en", 1), completions("de", "da", 1)]);

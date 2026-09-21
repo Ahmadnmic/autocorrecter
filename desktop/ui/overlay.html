@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="shared.css">
+<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><link rel="stylesheet" href="shared.css">
 <style>
 html,body{background:transparent;overflow:hidden}
 #chips{position:absolute;right:0;bottom:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:8px}
@@ -10,10 +10,4 @@ html,body{background:transparent;overflow:hidden}
 @keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes out{to{opacity:0;transform:translateY(6px)}}
 </style></head><body><div id="chips"></div>
-<script>
-const box=document.getElementById('chips');const show=s=>s===''?'∅':s.replace(/ /g,'␣');
-window.ica.onChip(c=>{const el=document.createElement('div');el.className='chip';
-el.innerHTML=`<span class="kind ${c.kind}">${c.kind}</span><span class="diff"><s>${show(c.old)}</s> <span class="arrow">→</span> <b class="hl ${c.kind}">${show(c.to)}</b></span>`;
-box.appendChild(el);while(box.children.length>4)box.removeChild(box.firstChild);
-setTimeout(()=>{el.classList.add('out');setTimeout(()=>el.remove(),400)},5000);});
-</script></body></html>
+<script src="overlay.js"></script></body></html>

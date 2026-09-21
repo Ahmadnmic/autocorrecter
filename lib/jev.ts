@@ -39,36 +39,6 @@ export function jevLimited(): boolean {
   return !aiGatewayKey() && /^jev_/.test(jevKey());
 }
 
-/** Diagnostics only: try each host once and report status + message. Never returns a key. */
-export async function jevProbe(): Promise<Array<{ host: string; status: number; message: string }>> {
-  const body = { state: { sentence: "I put the keys their." }, questions: { wrong: { type: "noul", instructions: "Does the sentence contain a wrong word?" } } };
-  const out: Array<{ host: string; status: number; message: string }> = [];
-  for (const ep of ENDPOINTS) {
-    const key = ep.key();
-    if (!key) {
-      out.push({ host: ep.name, status: 0, message: "no key for this host" });
-      continue;
-    }
-    try {
-      const res = await fetch(ep.url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` }, body: JSON.stringify({ ...body, model: ep.model }), cache: "no-store" });
-      const json = await res.json().catch(() => ({}));
-      out.push({ host: ep.name, status: res.status, message: JSON.stringify(json).slice(0, 160) });
-    } catch (e) {
-      out.push({ host: ep.name, status: 0, message: (e as Error).message });
-    }
-  }
-  return out;
-}
-
-/** Safe hint for humans comparing keys: first 6 characters, length and character classes. */
-export function jevKeyHint(): string {
-  const k = aiGatewayKey() || jevKey();
-  if (!k) return "";
-  const letters = (k.match(/[A-Za-z]/g) ?? []).length;
-  const digits = (k.match(/[0-9]/g) ?? []).length;
-  const others = Array.from(new Set(k.replace(/[A-Za-z0-9]/g, "").split(""))).map((c) => (c === " " ? "space" : `U+${c.codePointAt(0)?.toString(16)}`));
-  return `${aiGatewayKey() ? "gateway " : ""}${k.slice(0, 6)}… (${k.length} chars: ${letters} letters, ${digits} digits, other: ${others.length ? others.join(" ") : "none"})`;
-}
 
 export function jevConfigured(): boolean {
   return !!(aiGatewayKey() || jevKey());
