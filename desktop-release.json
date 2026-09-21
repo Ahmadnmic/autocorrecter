@@ -1,21 +1,21 @@
 {
-  "version": "0.1.4",
-  "notes": "0.1.4: fixes the blank Settings window in 0.1.3; verified updates (signed manifest, checksums), installs to Applications when run from Downloads, hardened app (fuses, sandbox, CSP), Windows password-field detection.",
+  "version": "0.1.5",
+  "notes": "0.1.5: corrections are now applied in place (no more Backspace and retyping), context fixes from Claude (wrong word for the meaning, grammar in context) and a Tone setting, like the web app.",
   "assets": {
     "darwin-arm64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.4-mac-apple-silicon.zip",
-      "sha256": "82a8a8e52ef9550ad458536492f868fafe6f12544f2159a918300b5b7d3e0468",
-      "size": 127231726
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.5-mac-apple-silicon.zip",
+      "sha256": "23a54436107ed79b760c70e8c999d6562b7463f951e805b8ced1447ccb2e8940",
+      "size": 127258258
     },
     "darwin-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.4-mac-intel.zip",
-      "sha256": "998737fe5c31db907c7c927e182951b5affd1f0306bb4aabe67bfffb837632f4",
-      "size": 134218509
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.5-mac-intel.zip",
+      "sha256": "6224a4bed6bc212ee3a17f8a5ac95370478aadb035dbc192bbb4496bc5ec3c6f",
+      "size": 134245055
     },
     "win32-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.4-windows-x64.zip",
-      "sha256": "73fc9163548f6e49b5a258833d3936691da507a259b8a7ee17704f97ef4f22ae",
-      "size": 158637597
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.5-windows-x64.zip",
+      "sha256": "1a6259e758b67ce3f81f250c7d13696fd160ecd7eac8179eb694d3229d440b2a",
+      "size": 158663533
     },
     "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }
