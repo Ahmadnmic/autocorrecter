@@ -39,7 +39,13 @@ Versioned edit log with relocation of late decisions; cancel-and-replace of in-f
 - **Demo:** two lines typed with the system off (text stays untouched and is locked), then five lines with it on; English with three Danish words for translation; autocomplete points marked in the script.
 - **Layout:** Settings + Activity left, document centered, Changes right; below 1100 px both become hamburger drawers.
 
-## 6. Still open
+## 6. Platforms (2026-09-21, later the same day)
+- **Desktop 0.1.2** (macOS arm64/x64, Windows x64): Electron tray app, uiohook keyboard hook with US/Danish key maps, corrections typed via System Events / SendKeys, chips overlay, settings window with Revert, feature requests, in-place self-update from `/api/desktop-version`. Ad-hoc signed only: macOS needs "Open Anyway" once.
+- **Android**: spell checker service (recommended, any keyboard) + keyboard; signed APK built by GitHub Actions, published as a release; link in the manifest.
+- **Learning loop**: `/api/log` (client outcomes) + per-route logs → `/api/learn` cron aggregates (min support 2, reverts veto) → one Haiku vetting call per batch → `/api/library` (versioned) → clients apply learned fixes instantly; every 50 entries a "library release" flag prompts the apps.
+- **Open**: Vercel ↔ GitHub link needs the Vercel GitHub app authorised by the account owner; proper code signing (Apple Developer ID + notarisation, Windows Authenticode) to remove the Gatekeeper/SmartScreen warnings; security review pending.
+
+## 7. Still open (older)
 1. Threshold calibration on a labelled corpus (typo 0.75, re-check 0.85, complete 0.80, context 0.80 are starting points).
 2. Daily spend cap for Haiku.
 3. "kunden" → "the customer" duplicated the article once; a rule now drops a leading article already typed. Watch for other multi-word translations.

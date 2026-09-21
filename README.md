@@ -1,5 +1,15 @@
 # Inline Contextual Autocorrect
 
+Web preview: https://inline-autocorrect.vercel.app · Repo: https://github.com/Ahmadnmic/autocorrecter
+
+| Platform | Where | How it applies corrections |
+|---|---|---|
+| Web (preview) | `app/` | In the editor, instantly, with highlights and a Changes sidebar |
+| macOS / Windows | `desktop/` (Electron, tray app) | Global keyboard hook + Backspace/retype into the focused app; colour chips overlay; settings from the tray; self-updating from `/api/desktop-version` |
+| Android / GrapheneOS | `android/` (Kotlin) | Spell checker service (any keyboard; underlines + tap to accept) and an optional keyboard that auto-corrects |
+
+All clients call the same API routes. Outcomes are logged to Vercel Blob (`logs/`), a cron job (`/api/learn`, every 10 min) turns kept corrections into the shared library (`/api/library`) after a Haiku vetting call, and every 50 new entries the clients are told. Feature requests from the desktop app land in `GET /api/feedback?format=md`.
+
 A Google-Docs-style editor that corrects and improves your words *while you type*, with no idle wait.
 
 - **Pass A – typo fix.** The word you just finished is checked with Hunspell. Jev picks the intended word from the candidates using the sentence so far.

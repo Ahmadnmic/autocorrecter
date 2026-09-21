@@ -1,10 +1,10 @@
 {
-  "version": "0.1.1",
-  "notes": "First release: system-wide typo fixes, confusables, merged words resolved with context, Danish/English translation, on-screen chips, tray settings, self-updating.",
+  "version": "0.1.2",
+  "notes": "0.1.2: fixes the keyboard listener on macOS and Windows (characters were not being read), adds Danish/US layout support, key counter in Settings, credential protection, feature requests.",
   "assets": {
-    "darwin-arm64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-mac-apple-silicon.zip",
-    "darwin-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-mac-intel.zip",
-    "win32-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-windows-x64.zip",
+    "darwin-arm64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.2-mac-apple-silicon.zip",
+    "darwin-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.2-mac-intel.zip",
+    "win32-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.2-windows-x64.zip",
     "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }
 }
