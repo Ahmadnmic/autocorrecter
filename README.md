@@ -61,3 +61,7 @@ lib/spell.ts            nspell loader (dictionary-en, dictionary-da)
 lib/thresholds.ts       aggressiveness → decision thresholds
 rules/                  anti-AI-slop ruleset (markdown + JSON used by the proposer)
 ```
+
+## Security
+
+See [docs/SECURITY.md](docs/SECURITY.md): rate limits and budgets on the API, private log storage with 14-day retention, CSP and security headers, signed and checksummed desktop updates with Electron fuses, credential-field protection on every platform, and the remaining risks (code signing, per-instance limits).
