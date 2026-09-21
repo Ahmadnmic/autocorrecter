@@ -10,12 +10,14 @@ const { makeKeyHandler } = require("./hook.js");
 
 const API_BASE = process.env.ICA_API_BASE || "https://inline-autocorrect.vercel.app";
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json");
-const defaults = { enabled: true, aggressiveness: 0.5, lang: "auto", overlay: true, overlayCorner: "bottom-right" };
+const defaults = { enabled: true, aggressiveness: 0.5, lang: "auto", tone: "as-written", overlay: true, overlayCorner: "bottom-right" };
+const TONES = ["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"];
 // Settings the renderer may change, with their validators. Anything else is ignored.
 const SETTING_RULES = {
   enabled: (v) => typeof v === "boolean",
   aggressiveness: (v) => typeof v === "number" && v >= 0 && v <= 1,
   lang: (v) => ["auto", "en", "da"].includes(v),
+  tone: (v) => TONES.includes(v),
   overlay: (v) => typeof v === "boolean",
   overlayCorner: (v) => ["bottom-right", "bottom-left", "top-right", "top-left"].includes(v),
   firstRun: (v) => typeof v === "boolean",
@@ -252,7 +254,7 @@ app.whenReady().then(async () => {
   const typer = makeTyper();
   engine = new Engine({
     apiBase: API_BASE,
-    settings: () => ({ enabled: settings.enabled, aggressiveness: settings.aggressiveness, lang: settings.lang }),
+    settings: () => ({ enabled: settings.enabled, aggressiveness: settings.aggressiveness, lang: settings.lang, tone: settings.tone }),
     apply: typer,
     secureField: typer.secureField,
     onChange: (c) => {

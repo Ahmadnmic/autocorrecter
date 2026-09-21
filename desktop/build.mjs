@@ -65,7 +65,7 @@ for (const t of targets) {
     overwrite: true,
     platform: t.platform,
     arch: t.arch,
-    asar: { unpack: "**/*.node" },
+    asar: { unpack: "**/*.node", unpackDir: "native" },
     icon: path.join(here, "assets", "icon"),
     appBundleId: "com.nmic.inline-autocorrect",
     appCopyright: "nmic demo",

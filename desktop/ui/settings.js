@@ -11,6 +11,7 @@ function render(st) {
   $("aggr").value = s.aggressiveness;
   $("aggrv").textContent = Math.round(s.aggressiveness * 100);
   $("lang").value = s.lang;
+  $("tone").value = s.tone || "as-written";
   $("overlay").value = s.overlay ? "1" : "0";
   $("corner").value = s.overlayCorner;
   const live = st.changes.filter((c) => !c.reverted).length;
@@ -47,6 +48,7 @@ $("aggr").oninput = (e) => {
   ica.set("aggressiveness", Number(e.target.value));
 };
 $("lang").onchange = (e) => ica.set("lang", e.target.value);
+$("tone").onchange = (e) => ica.set("tone", e.target.value);
 $("overlay").onchange = (e) => ica.set("overlay", e.target.value === "1");
 $("corner").onchange = (e) => ica.set("overlayCorner", e.target.value);
 $("web").onclick = () => ica.openWeb();

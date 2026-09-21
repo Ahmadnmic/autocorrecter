@@ -7,9 +7,12 @@ async function main() {
   const engine = new Engine({
     apiBase: process.env.API_BASE || "https://inline-autocorrect.vercel.app",
     settings: () => ({ aggressiveness: 0.5, lang: "auto", enabled: true }),
-    apply: async (n, s) => {
-      screen = screen.slice(0, screen.length - n) + s;
-    },
+    apply: Object.assign(async ({ tail, old, to }) => {
+      const cut = screen.length - tail - old.length;
+      if (screen.slice(cut, cut + old.length) !== old) return false;
+      screen = screen.slice(0, cut) + to + screen.slice(cut + old.length);
+      return true;
+    }, { atomic: true }),
     onChange: (c) => console.log(`  change: ${JSON.stringify(c.old)} -> ${JSON.stringify(c.to)} [${c.kind}]`),
     log: (m) => console.log("  log:", m),
   });

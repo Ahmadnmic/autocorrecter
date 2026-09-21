@@ -1,13 +1,13 @@
 {
   "name": "inline-autocorrect-desktop",
   "productName": "Inline Autocorrect",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "System-wide inline autocorrect: typo fixes, confusables and merged words corrected in any app you type in.",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node test.js && node test-keymap.js && node test-hook.js && node test-updater.js",
+    "test": "node test.js && node test-keymap.js && node test-hook.js && node test-updater.js && node test-context.js",
     "build": "node build.mjs",
     "release": "node build.mjs --upload"
   },

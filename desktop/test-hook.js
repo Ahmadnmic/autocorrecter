@@ -4,7 +4,7 @@ const { Engine } = require("./engine.js");
 const { makeKeyHandler } = require("./hook.js");
 async function main() {
   let screen = "";
-  const engine = new Engine({ apiBase: "https://inline-autocorrect.vercel.app", settings: () => ({ aggressiveness: 0.5, lang: "auto", enabled: true }), apply: async (n, s) => { screen = screen.slice(0, screen.length - n) + s; }, onChange: (c) => console.log(`  change: ${c.old} -> ${c.to} [${c.kind}]`) });
+  const engine = new Engine({ apiBase: "https://inline-autocorrect.vercel.app", settings: () => ({ aggressiveness: 0.5, lang: "auto", enabled: true }), apply: Object.assign(async ({ tail, old, to }) => { const cut = screen.length - tail - old.length; if (screen.slice(cut, cut + old.length) !== old) return false; screen = screen.slice(0, cut) + to + screen.slice(cut + old.length); return true; }, { atomic: true }), onChange: (c) => console.log(`  change: ${c.old} -> ${c.to} [${c.kind}]`) });
   const handler = makeKeyHandler({ engine, UiohookKey: K, getLayout: () => "da-mac" });
   const codes = { " ": K.Space, ",": K.Comma, ".": K.Period, "æ": K.Semicolon, "ø": K.Quote, "å": K.BracketLeft };
   const type = async (str) => { for (const ch of str) { const upper = ch !== ch.toLowerCase(); const code = codes[ch] ?? K[ch.toUpperCase()]; if (!code) throw new Error("no code for " + ch); screen += ch; handler({ keycode: code, shiftKey: upper, ctrlKey: false, metaKey: false, altKey: false }); await new Promise((r) => setTimeout(r, 35)); } };

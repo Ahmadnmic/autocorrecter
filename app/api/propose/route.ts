@@ -6,12 +6,12 @@ import { thresholds } from "@/lib/thresholds";
 import { nthWordOccurrence, transferCase, type Lang } from "@/lib/text";
 import { isSlop } from "@/lib/slop";
 import { logEvent, scrub } from "@/lib/log";
-import { num, rateLimit, readJson, spendBudget, str, NO_STORE } from "@/lib/guard";
+import { checkSecret, num, rateLimit, readJson, spendBudget, str, NO_STORE } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean };
+type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean };
 const TONES = new Set(["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"]);
 
 export async function POST(req: Request) {
@@ -57,16 +57,29 @@ export async function POST(req: Request) {
     // 3. Jev gates each proposal.
     const state: Record<string, unknown> = { task: "Inline autocorrect gate. A proposer suggested word replacements. Approve only replacements the author would clearly want; when in doubt keep the original." + toneNote, language: lang, tone, window };
     const questions: Record<string, { type: "choice"; instructions: string; criteria: Record<string, string> } | { type: "noul"; instructions: string }> = {};
-    located.forEach((p, i) => {
+    // The whole sentence that holds the word, with the first alternative substituted: Jev judges a complete sentence,
+    // never a fragment cut mid-word.
+    const sentenceWith = (p: (typeof located)[number]) => {
       const preview = window.slice(0, p.offset) + p.alternatives[0] + window.slice(p.offset + p.original.length);
-      state[`proposal_${i}`] = { original: p.original, position: p.offset, alternatives: p.alternatives, proposer_reason: p.reason, text_after_first_alternative: preview.slice(Math.max(0, p.offset - 120), p.offset + p.alternatives[0].length + 120) };
+      const before = preview.slice(0, p.offset);
+      const startM = /[.!?]\s+(?=[^.!?]*$)/.exec(before);
+      const start = startM ? startM.index + startM[0].length : 0;
+      const after = preview.slice(p.offset + p.alternatives[0].length);
+      const endM = /[.!?]/.exec(after);
+      const end = p.offset + p.alternatives[0].length + (endM ? endM.index + 1 : after.length);
+      return preview.slice(start, end).trim();
+    };
+    located.forEach((p, i) => {
+      state[`proposal_${i}`] = { original: p.original, position: p.offset, alternatives: p.alternatives, proposer_reason: p.reason, sentence_with_replacement: sentenceWith(p) };
       const criteria: Record<string, string> = { keep_original: `Keep "${p.original}".` };
       p.alternatives.forEach((alt, j) => (criteria[`alt_${j}`] = `Replace with "${alt}".`));
       questions[`choice_${i}`] = { type: "choice", instructions: `For proposal_${i}: which word is right in context?`, criteria };
       questions[`prefers_${i}`] = { type: "noul", instructions: `For proposal_${i}: would the author clearly prefer the best replacement over their original word?` };
-      questions[`reads_${i}`] = { type: "noul", instructions: `For proposal_${i}: after the replacement (see text_after_first_alternative), is the sentence still grammatical and does it keep its meaning?` };
+      questions[`reads_${i}`] = { type: "noul", instructions: `For proposal_${i}: read sentence_with_replacement (it may be unfinished at the end, and it may still contain other, unrelated mistakes; ignore both). Does the replacement itself fit its slot grammatically and keep the intended meaning?` };
     });
     const gate = await jevDecide(state, questions);
+    // Gate details for tuning; only with the admin secret.
+    const debug = body.debug === true && !checkSecret(req, "ADMIN_SECRET") ? located.map((p, i) => ({ original: p.original, alternatives: p.alternatives, category: p.category, reason: p.reason, choice: gate[`choice_${i}`]?.choice, confidence: gate[`choice_${i}`]?.confidence, prefers: gate[`prefers_${i}`]?.noul, reads: gate[`reads_${i}`]?.noul })) : undefined;
     const approved = located
       .map((p, i) => {
         const c = gate[`choice_${i}`] ?? {};
@@ -77,13 +90,15 @@ export async function POST(req: Request) {
         const to = m ? p.alternatives[Number(m[1])] : undefined;
         const conf = c.confidence ?? 0;
         const isTone = p.category === "tone";
-        // Tone changes are a stated preference, not an error claim: the gate is lower for them.
-        if (!to || conf < (isTone ? T.ctx - 0.2 : T.ctx) || n < (isTone ? T.prefers - 0.2 : T.prefers)) return null;
+        // Tone changes are a stated preference, not an error claim: the gate is lower for them. For error claims the
+        // choice confidence and the readability check carry the decision; "author would prefer" is a style signal, so
+        // it only has to be clearly above even.
+        if (!to || conf < (isTone ? T.ctx - 0.2 : T.ctx - 0.05) || n < (isTone ? T.prefers - 0.2 : T.prefers - 0.2)) return null;
         return { original: p.original, offset: p.offset, to: transferCase(p.original, to), confidence: Math.min(conf, n), reason: p.reason, kind: p.category === "tone" || (tone !== "as-written" && /tone|formal|casual|register|slang|colloquial|informal/i.test(p.reason)) ? "tone" : "context" };
       })
       .filter((x): x is NonNullable<typeof x> => !!x);
     logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone }, out: { worth, proposed: located.map((p) => ({ original: scrub(p.original), alternatives: p.alternatives, category: p.category, reason: p.reason })), approved } });
-    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0 }, { headers: NO_STORE });
+    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0, debug }, { headers: NO_STORE });
   } catch (e) {
     const err = e as JevError | HaikuError;
     return NextResponse.json({ approved: [], why: "error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });

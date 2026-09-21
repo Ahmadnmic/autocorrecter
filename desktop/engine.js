@@ -4,12 +4,16 @@
 const text = require("./vendor/text.js");
 const { grammarFix } = require("./vendor/grammar.js");
 
-const MAX_TAIL = 48; // never rewrite more than this many characters back from the caret
+// How far back from the caret a keystroke-based typer may edit (it moves the caret there and back). An atomic typer
+// (Accessibility replace) edits in place, so it may reach the whole window.
+const MAX_TAIL = 48;
+const MAX_TAIL_CONTEXT = 90;
+const MAX_TAIL_ATOMIC = 600;
 
 class Engine {
   /**
    * @param {object} o
-   * @param {(n:number, s:string)=>Promise<void>} o.apply  backspace n chars then type s
+   * @param {(c:{tail:number, old:string, to:string})=>Promise<boolean>} o.apply  replace `old`, `tail` chars before the caret, with `to`; false when the text is not where expected
    * @param {string} o.apiBase
    * @param {()=>{aggressiveness:number, lang:"auto"|"en"|"da", enabled:boolean}} o.settings
    * @param {(e:{old:string,to:string,kind:string})=>void} [o.onChange]
@@ -36,8 +40,14 @@ class Engine {
     this.langProbe = 0;
     this.library = { version: 0, count: 0, entries: {}, never: [] };
     this.session = Math.random().toString(36).slice(2, 10);
+    this.wordsSinceContext = 0;
+    this.contextInflight = false;
+    this.lastContextWindow = "";
     this.logQueue = [];
     this.logTimer = null;
+    this.lastKeyAt = 0;
+    this.resetVersion = 0;
+    this.chain = Promise.resolve(); // rewrites run one at a time, each re-validated against the current buffer
     this.refreshLibrary();
     setInterval(() => this.refreshLibrary(), 10 * 60 * 1000).unref?.();
   }
@@ -70,6 +80,7 @@ class Engine {
     if (this.buf) this.log(`reset (${reason})`);
     this.buf = "";
     this.version++;
+    this.resetVersion = this.version;
     this.unresolved.clear();
     this.changes = [];
     this.secureKnown = null;
@@ -78,6 +89,7 @@ class Engine {
   /** A printable character was typed. */
   char(ch) {
     if (this.applying) return;
+    this.lastKeyAt = Date.now();
     this.buf += ch;
     if (this.buf.length > 600) this.buf = this.buf.slice(-400);
     this.version++;
@@ -127,6 +139,7 @@ class Engine {
 
   backspace() {
     if (this.applying) return;
+    this.lastKeyAt = Date.now();
     this.buf = this.buf.slice(0, -1);
     this.version++;
   }
@@ -136,16 +149,39 @@ class Engine {
     return s.lang === "auto" ? this.lang || text.detectLang(this.buf) : s.lang;
   }
 
-  /** Rewrite [start, start+old.length) to `to`, keeping `tail` after it. */
-  async rewrite(start, old, to, tail, kind) {
-    if (this.applying) return false;
-    if (this.buf.slice(start, start + old.length) !== old) return false;
-    if (this.buf.slice(start + old.length) !== tail) return false;
+  /** Rewrite [start, start+old.length) to `to`, keeping `tail` after it. Rewrites are queued and applied in order. */
+  rewrite(start, old, to, tail, kind) {
+    if (this.buf.slice(start, start + old.length) !== old) return Promise.resolve(false);
+    if (this.buf.slice(start + old.length) !== tail) return Promise.resolve(false);
     const n = old.length + tail.length;
-    if (n > MAX_TAIL) return false;
+    if (n > this.maxTail(kind)) return Promise.resolve(false);
+    const version = this.version;
+    const run = this.chain.then(() => this.rewriteNow(start, old, to, kind, version)).catch(() => false);
+    this.chain = run.then(() => undefined);
+    return run;
+  }
+
+  maxTail(kind) {
+    if (this.apply.atomic) return MAX_TAIL_ATOMIC;
+    return kind === "context" || kind === "tone" ? MAX_TAIL_CONTEXT : MAX_TAIL;
+  }
+
+  async rewriteNow(start, old, to, kind, version) {
+    // A keystroke-based typer edits during a short quiet moment (a keystroke's gap) so its keys never land between
+    // the user's own. An atomic typer (Accessibility replace) needs no wait: it edits the exact range in place.
+    if (!this.apply.atomic) for (let waited = 0; Date.now() - this.lastKeyAt < 90 && waited < 1500; waited += 30) await new Promise((r) => setTimeout(r, 30));
+    if (this.resetVersion > version) return false; // the field changed (click, Enter, arrow) since this was decided
+    if (this.buf.slice(start, start + old.length) !== old) return false;
+    const tail = this.buf.slice(start + old.length);
+    if (old.length + tail.length > this.maxTail(kind)) return false;
     this.applying = true;
     try {
-      await this.apply(n, to + tail);
+      const ok = await this.apply({ tail: tail.length, old, to });
+      if (!ok) {
+        this.log("apply refused: text not where expected, resetting");
+        this.reset("desync");
+        return false;
+      }
       this.buf = this.buf.slice(0, start) + to + tail;
       this.version++;
       this.changes.push({ start, end: start + to.length, old, to, kind });
@@ -186,12 +222,16 @@ class Engine {
       if (!alternatives || !alternatives.length || this.never.has(lower)) continue;
       recheck.push({ id: `${sp.start}:${sp.word}`, word: sp.word, alternatives: alternatives.slice(0, 3), left: this.buf.slice(Math.max(0, sp.start - 300), sp.start), right: this.buf.slice(sp.end), start: sp.start, end: sp.end });
     }
-    if (typos.length || recheck.length) this.sendJev(typos, recheck, s, lang);
+    // Context pass: every few words or at a sentence end, the batched request also asks Jev whether the recent
+    // window holds a word that is wrong in context; only then Haiku proposes and Jev gates (same as the web app).
+    this.wordsSinceContext++;
+    const window = this.buf.slice(-600);
+    const wantContext = !this.contextInflight && window !== this.lastContextWindow && window.trim().split(/\s+/).length >= 6 && (this.wordsSinceContext >= 4 || /[.!?]/.test(boundary));
+    if (typos.length || recheck.length || wantContext) this.sendJev(typos, recheck, s, lang, wantContext ? window : null);
     this.resolveUnresolved();
   }
 
-  async sendJev(typos, recheck, s, lang) {
-    const version = this.version;
+  async sendJev(typos, recheck, s, lang, contextWindow = null) {
     const probe = s.lang === "auto" && (!this.lang || this.langProbe++ >= 10);
     if (probe) this.langProbe = 0;
     const body = {
@@ -200,20 +240,33 @@ class Engine {
       lang: probe ? "auto" : lang,
       doc: probe ? this.buf.slice(-4000) : undefined,
       aggressiveness: s.aggressiveness,
+      tone: s.tone || "as-written",
       typos: typos.map(({ id, word, left }) => ({ id, word, left })),
       recheck: recheck.map(({ id, word, alternatives, left, right }) => ({ id, word, alternatives, left, right })),
+      prefilter: contextWindow ? { window: contextWindow } : undefined,
     };
+    if (contextWindow) {
+      this.wordsSinceContext = 0;
+      this.lastContextWindow = contextWindow;
+      this.contextInflight = true;
+    }
     let res;
     try {
       this.inflight++;
       res = await this.post("/api/jev", body);
     } catch (e) {
       this.log(`jev error: ${e.message}`);
+      this.contextInflight = false;
       return;
     } finally {
       this.inflight--;
     }
     if (res.lang) this.lang = res.lang;
+    if (contextWindow) {
+      this.log(`prefilter worth=${res.prefilter?.worth ?? "?"} callHaiku=${!!res.prefilter?.callHaiku}`);
+      if (res.prefilter?.callHaiku) this.contextPass(contextWindow, res.lang || lang, s);
+      else this.contextInflight = false;
+    }
     for (const d of res.typos || []) {
       const t = typos.find((x) => x.id === d.id);
       if (!t) continue;
@@ -227,6 +280,34 @@ class Engine {
     for (const d of res.recheck || []) {
       const r = recheck.find((x) => x.id === d.id);
       if (r && d.replace && d.to) this.applyIfIntact(r.start, r.word, d.to, "recheck");
+    }
+  }
+
+  /** Haiku proposes better words for the window, Jev gates them; approved ones are applied where the text is intact. */
+  async contextPass(window, lang, s) {
+    try {
+      const res = await this.post("/api/propose", { window, lang, aggressiveness: s.aggressiveness, tone: s.tone || "as-written", skipPrefilter: true }, 9000);
+      const approved = Array.isArray(res.approved) ? res.approved : [];
+      this.log(`propose: ${res.proposed ?? 0} proposed, ${approved.length} approved${res.why ? ` (${res.why})` : ""}`);
+      // Locate the window in the current buffer (text may have grown since); apply from the end so offsets hold.
+      const anchor = window.slice(-80);
+      const at = this.buf.lastIndexOf(anchor);
+      if (at < 0) return this.log("propose: window no longer in buffer");
+      const windowStart = at + anchor.length - window.length;
+      for (const a of [...approved].sort((x, y) => y.offset - x.offset)) {
+        if (!a || typeof a.original !== "string" || typeof a.to !== "string" || !(a.offset >= 0)) continue;
+        const abs = windowStart + a.offset;
+        if (abs < 0 || this.buf.slice(abs, abs + a.original.length) !== a.original) {
+          this.log(`propose: "${a.original}" moved, skipped`);
+          continue;
+        }
+        const ok = await this.applyIfIntact(abs, a.original, a.to, a.kind === "tone" ? "tone" : "context");
+        if (!ok) this.log(`propose: "${a.original}" -> "${a.to}" not applied (too far back: ${this.buf.length - abs} chars, limit ${this.maxTail("context")})`);
+      }
+    } catch (e) {
+      this.log(`propose error: ${e.message}`);
+    } finally {
+      this.contextInflight = false;
     }
   }
 
@@ -281,9 +362,9 @@ class Engine {
     return this.rewrite(start, old, to, tail, kind);
   }
 
-  async post(path, body) {
+  async post(path, body, timeoutMs = 6000) {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 6000);
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const r = await fetch(this.apiBase + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
       return await r.json();
