@@ -1,21 +1,21 @@
 {
-  "version": "0.1.6",
-  "notes": "0.1.6: macOS permissions now survive updates (allow once more after this update), Windows corrections applied in place through UI Automation (no caret jumps), Retry restarts the keyboard listener, Windows update handover fixed and logged (update.log), context fixes and Tone.",
+  "version": "0.1.7",
+  "notes": "0.1.7: Windows corrections verified in place through UI Automation (separate helper, timeouts, read-back check), typing method and last result shown in Settings, typer.log for diagnostics.",
   "assets": {
     "darwin-arm64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.6-mac-apple-silicon.zip",
-      "sha256": "ea29cf88664c2f8f5404ab3b6e20602e8f9fe98c0378518363161800e24364c3",
-      "size": 127263830
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.7-mac-apple-silicon.zip",
+      "sha256": "b9aba9a7b13f1e5ae10f404e4186d94aa58adb6ddad2f19cc38f1f38ec617365",
+      "size": 127264891
     },
     "darwin-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.6-mac-intel.zip",
-      "sha256": "acc7d1d96ba485a35afa3b933a465b307a4b08fed733b14fb66e9c974d3237e5",
-      "size": 134261484
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.7-mac-intel.zip",
+      "sha256": "7a5164915b7495ad984003b2d10ed165d0d5c6ee124562f392335c01f3e0662e",
+      "size": 134262532
     },
     "win32-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.6-windows-x64.zip",
-      "sha256": "5efa0e3378b3a8bd58103c4058430f2ecfe64ece45ce126005b2019c4dbc8f01",
-      "size": 158665206
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.7-windows-x64.zip",
+      "sha256": "7a650a571b348bca8f669b9f3440995f72c93a430728741ddf74bb1163241715",
+      "size": 158666243
     },
     "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }
