@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,7 +9,7 @@ val ksB64 = System.getenv("KEYSTORE_B64")
 val ksFile = layout.buildDirectory.file("release.p12").get().asFile
 if (!ksB64.isNullOrBlank()) {
     ksFile.parentFile.mkdirs()
-    ksFile.writeBytes(java.util.Base64.getDecoder().decode(ksB64))
+    ksFile.writeBytes(Base64.getDecoder().decode(ksB64))
 }
 
 android {
