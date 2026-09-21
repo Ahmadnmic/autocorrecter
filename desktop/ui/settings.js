@@ -26,6 +26,8 @@ function render(st) {
   $("s1").textContent = `${st.stats.applied} / ${st.stats.reverted}`;
   $("s2").textContent = st.hook ? "running" : "not running";
   $("s6").textContent = `${st.keyEvents || 0} / ${st.layout || "?"}`;
+  $("s7").textContent = st.typer?.mode || "–";
+  $("s8").textContent = st.typer?.last?.at ? `${st.typer.last.method}: ${st.typer.last.result} (${st.typer.last.ms} ms)` : "–";
   $("s3").textContent = String(st.api).replace(/^https?:\/\//, "");
   $("s4").textContent = st.version || "";
   $("s5").textContent = st.library ? `${st.library.count} (v${st.library.version})` : "–";

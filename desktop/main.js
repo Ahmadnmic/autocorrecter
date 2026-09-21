@@ -153,7 +153,7 @@ function openSettings() {
   settingsWin.on("closed", () => (settingsWin = null));
 }
 function pushState() {
-  const state = { settings, changes: changes.slice(0, 80), stats, hook: hookStarted, permissions: permissionState(), platform: process.platform, api: API_BASE, version: app.getVersion(), library: engine ? { count: engine.library.count, version: engine.library.version } : null, keyEvents, lastKeyAt, layout, startedAt };
+  const state = { settings, changes: changes.slice(0, 80), stats, hook: hookStarted, typer: engine ? { mode: engine.apply.mode?.(), last: engine.apply.last } : null, permissions: permissionState(), platform: process.platform, api: API_BASE, version: app.getVersion(), library: engine ? { count: engine.library.count, version: engine.library.version } : null, keyEvents, lastKeyAt, layout, startedAt };
   if (settingsWin) settingsWin.webContents.send("state", state);
   return state;
 }
@@ -251,7 +251,7 @@ app.whenReady().then(async () => {
   });
   tray.on("double-click", openSettings);
 
-  const typer = makeTyper();
+  const typer = makeTyper({ logFile: path.join(app.getPath("userData"), "typer.log") });
   engine = new Engine({
     apiBase: API_BASE,
     settings: () => ({ enabled: settings.enabled, aggressiveness: settings.aggressiveness, lang: settings.lang, tone: settings.tone }),

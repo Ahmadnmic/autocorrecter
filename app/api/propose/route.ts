@@ -46,7 +46,8 @@ export async function POST(req: Request) {
     }
 
     // 2. Haiku proposes.
-    const proposals = await proposeImprovements(window, lang, tone);
+    // Tone mode returns more proposals and runs longer; the function budget is 15 s.
+    const proposals = await proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000);
     // Hard anti-slop filter: no banned alternative ever reaches the gate, whatever the model said.
     const located = proposals
       // Model output is untrusted: alternatives must be short plain text, never line breaks or markup.
@@ -101,6 +102,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0, debug }, { headers: NO_STORE });
   } catch (e) {
     const err = e as JevError | HaikuError;
-    return NextResponse.json({ approved: [], why: "error", ms: Date.now() - t0 }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });
+    console.error("propose failed:", err.message, (err as HaikuError).body ? JSON.stringify((err as HaikuError).body).slice(0, 300) : "");
+    const detail = !checkSecret(req, "ADMIN_SECRET") ? `${err.message} ${JSON.stringify((err as HaikuError).body ?? "").slice(0, 400)}` : undefined;
+    return NextResponse.json({ approved: [], why: "error", ms: Date.now() - t0, detail }, { status: err.status === 429 ? 429 : err.status === 503 ? 503 : 200, headers: NO_STORE });
   }
 }

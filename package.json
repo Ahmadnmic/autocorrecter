@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "verify": "node scripts/verify-web.mjs",
+    "deploy": "tsc --noEmit -p . && vercel --prod --yes && sleep 5 && node scripts/verify-web.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",
