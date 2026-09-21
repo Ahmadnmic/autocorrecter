@@ -23,6 +23,7 @@ const dist = path.join(here, "dist");
 const args = process.argv.slice(2);
 const upload = args.includes("--upload");
 const skipPackage = args.includes("--skip-package"); // reuse the zips already in dist/
+const only = args.includes("--only") ? args[args.indexOf("--only") + 1] : null; // package one target, no manifest
 const notes = args.includes("--notes") ? args[args.indexOf("--notes") + 1] : `Inline Autocorrect ${version}`;
 const targets = [
   { platform: "darwin", arch: "arm64", key: "darwin-arm64", file: `inline-autocorrect-${version}-mac-apple-silicon.zip` },
@@ -49,6 +50,7 @@ const FUSES = {
 
 const manifest = { version, notes, assets: {} };
 for (const t of targets) {
+  if (only && t.key !== only) continue;
   console.log(`\n== ${t.key}`);
   const zip = path.join(dist, t.file);
   if (skipPackage && fs.existsSync(zip)) {
@@ -94,6 +96,7 @@ for (const t of targets) {
   manifest.assets[t.key] = { url: "", sha256: crypto.createHash("sha256").update(buf).digest("hex"), size: buf.length };
   console.log(t.file, buf.length, manifest.assets[t.key].sha256);
 }
+if (only) process.exit(0);
 manifest.assets.android = "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk";
 
 if (upload) {

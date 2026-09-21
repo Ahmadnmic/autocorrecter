@@ -1,7 +1,7 @@
 {
   "name": "inline-autocorrect-desktop",
   "productName": "Inline Autocorrect",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "System-wide inline autocorrect: typo fixes, confusables and merged words corrected in any app you type in.",
   "main": "main.js",
   "private": true,

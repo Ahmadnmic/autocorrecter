@@ -1,5 +1,5 @@
 "use strict";
-const { app, Tray, Menu, BrowserWindow, nativeImage, ipcMain, screen, shell, systemPreferences, dialog } = require("electron");
+const { app, Tray, Menu, BrowserWindow, nativeImage, ipcMain, screen, shell, systemPreferences, dialog, protocol } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { Engine } = require("./engine.js");
@@ -22,13 +22,35 @@ const SETTING_RULES = {
 };
 const UI_DIR = path.join(__dirname, "ui");
 const WEB_PREFS = { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false, navigateOnDragDrop: false };
-/** IPC is only accepted from our own two pages (top frame, loaded from the app's ui folder). */
+// The two UI pages are served from the app's own scheme (app://ui/...) rather than file://: file:// has no usable
+// origin for CSP or sender checks, and its extra privileges are switched off by a fuse in the packaged app.
+const UI_ORIGIN = "app://ui";
+const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false } }]);
+function registerUiScheme() {
+  protocol.handle("app", async (req) => {
+    try {
+      const u = new URL(req.url);
+      const rel = path.normalize(decodeURIComponent(u.pathname)).replace(/^[/\\]+/, "");
+      const file = path.join(UI_DIR, rel);
+      const ext = path.extname(file).toLowerCase();
+      if (u.host !== "ui" || !file.startsWith(UI_DIR + path.sep) || !MIME[ext]) return new Response("not found", { status: 404 });
+      const body = await fs.promises.readFile(file);
+      return new Response(body, { headers: { "content-type": MIME[ext], "cache-control": "no-store" } });
+    } catch {
+      return new Response("not found", { status: 404 });
+    }
+  });
+}
+/** IPC is only accepted from our own two pages (top frame, served from the app scheme). */
 function trustedSender(e) {
   const f = e.senderFrame;
   if (!f || f.parent !== null) return false;
   try {
+    // Node's URL gives "null" as the origin of non-http schemes, so compare the parts; Chromium treats app://ui
+    // as a standard origin, so no path or query can spoof it.
     const u = new URL(f.url);
-    return u.protocol === "file:" && path.resolve(decodeURIComponent(u.pathname)).startsWith(UI_DIR + path.sep);
+    return u.protocol === "app:" && u.host === "ui";
   } catch {
     return false;
   }
@@ -82,7 +104,7 @@ function ensureOverlay() {
   overlayWin.setIgnoreMouseEvents(true);
   overlayWin.setAlwaysOnTop(true, "screen-saver");
   overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  overlayWin.loadFile(path.join(__dirname, "ui", "overlay.html"));
+  overlayWin.loadURL(`${UI_ORIGIN}/overlay.html`);
   positionOverlay();
   overlayWin.on("closed", () => (overlayWin = null));
   return overlayWin;
@@ -124,7 +146,7 @@ function openSettings() {
     show: false,
     webPreferences: WEB_PREFS,
   });
-  settingsWin.loadFile(path.join(__dirname, "ui", "settings.html"));
+  settingsWin.loadURL(`${UI_ORIGIN}/settings.html`);
   settingsWin.once("ready-to-show", () => settingsWin.show());
   settingsWin.on("closed", () => (settingsWin = null));
 }
@@ -203,13 +225,18 @@ function setSetting(key, value) {
 // ---------- app ----------
 // Renderer hardening: our pages never navigate, never open windows, never get web-platform permissions.
 app.on("web-contents-created", (_e, contents) => {
-  contents.on("will-navigate", (e) => e.preventDefault());
+  if (process.env.ICA_DEBUG) contents.on("console-message", (ev) => console.log("[renderer]", ev.level, ev.message, ev.sourceId ?? "", ev.lineNumber ?? ""));
+  if (process.env.ICA_DEBUG) contents.on("preload-error", (_ev, p, err) => console.log("[preload-error]", p, err.message));
+  contents.on("will-navigate", (e, url) => {
+    if (!url.startsWith(`${UI_ORIGIN}/`)) e.preventDefault();
+  });
   contents.on("will-attach-webview", (e) => e.preventDefault());
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   contents.session.setPermissionCheckHandler(() => false);
 });
 app.whenReady().then(async () => {
+  registerUiScheme();
   loadSettings();
   if (process.platform === "darwin") app.dock?.hide();
   const trayIcon = process.platform === "darwin" ? nativeImage.createFromPath(path.join(__dirname, "assets", "trayTemplate.png")) : nativeImage.createFromPath(path.join(__dirname, "assets", "tray-win.png"));
@@ -252,6 +279,11 @@ app.whenReady().then(async () => {
   else if (settings.firstRun !== false) {
     openSettings();
     setSetting("firstRun", false);
+  }
+  if (process.env.ICA_FORCE_SETTINGS) {
+    openSettings();
+    // Debug aid: print what the settings page actually rendered, so a blank window is caught by tests.
+    settingsWin.webContents.once("did-finish-load", () => setTimeout(() => settingsWin.webContents.executeJavaScript("document.body.innerText.slice(0, 400)").then((t) => console.log("[settings text]", JSON.stringify(t))).catch((e) => console.log("[settings text] error", e.message)), 1500));
   }
   // Running from Downloads (macOS App Translocation) or an opened zip: offer to move to Applications so updates work.
   setTimeout(() => offerMoveToApplications().catch(() => {}), 2500);

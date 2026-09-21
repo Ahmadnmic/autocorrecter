@@ -27,6 +27,9 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     private data class Unresolved(val word: String, val leftAnchor: String, var tries: Int = 0)
     private var lang: String? = null
     private var langProbe = 0
+    private var wordsSinceContext = 0
+    private var contextInflight = false
+    private var lastContextWindow = ""
     @Volatile var library: JSONObject = JSONObject().put("entries", JSONObject()).put("never", JSONArray())
     private val logQueue = ArrayList<JSONObject>()
     private var logScheduled = false
@@ -66,11 +69,18 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
             rcMeta[id] = sp
             recheck.put(JSONObject().put("id", id).put("word", sp.word).put("alternatives", JSONArray(alts.take(3))).put("left", before.substring(maxOf(0, sp.start - 300), sp.start)).put("right", before.substring(sp.end)))
         }
-        if (typos.length() == 0 && recheck.length() == 0) { resolveLate(); return }
+        // Context pass: every few words, or at the end of a sentence, ask Jev whether the recent window holds a word
+        // that is wrong in context; only then is Haiku asked to propose, and Jev gates each proposal (same as the web).
+        wordsSinceContext++
+        val boundary = before.lastOrNull() ?: ' '
+        val window = before.takeLast(600)
+        val wantContext = !contextInflight && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 6 && (wordsSinceContext >= 4 || boundary in ".!?")
+        if (typos.length() == 0 && recheck.length() == 0 && !wantContext) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
         if (probe) langProbe = 0
         val body = JSONObject().put("client", "android").put("session", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("typos", typos).put("recheck", recheck)
         if (probe) body.put("doc", before)
+        if (wantContext) { body.put("prefilter", JSONObject().put("window", window)); wordsSinceContext = 0; lastContextWindow = window; contextInflight = true }
         val anchorLeft = before.substring(0, w.start)
         api.pool.execute {
             val res = api.post("/api/jev", body) ?: return@execute
@@ -89,7 +99,36 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
                     val sp = rcMeta[d.optString("id")] ?: continue
                     if (d.optBoolean("replace") && d.has("to")) applyIfIntact(sp.word, d.getString("to"), before.substring(0, sp.start), "recheck")
                 }
+                val pf = res.optJSONObject("prefilter")
+                if (wantContext) {
+                    if (pf != null && pf.optBoolean("callHaiku")) contextPass(window, res.optString("lang").ifEmpty { lang }) else contextInflight = false
+                }
                 resolveLate()
+            }
+        }
+    }
+
+    /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
+    private fun contextPass(window: String, lang: String) {
+        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("skipPrefilter", true)
+        api.pool.execute {
+            val res = api.post("/api/propose", body, 9000)
+            main.post {
+                contextInflight = false
+                val approved = res?.optJSONArray("approved") ?: JSONArray()
+                if (approved.length() == 0) return@post
+                val before = io.textBeforeCursor(600)
+                val windowStart = before.lastIndexOf(window.takeLast(80)).let { if (it < 0) -1 else it + 80 - window.length }
+                if (windowStart < 0) return@post
+                // Apply from the end so earlier offsets stay valid.
+                val items = (0 until approved.length()).map { approved.getJSONObject(it) }.sortedByDescending { it.optInt("offset") }
+                for (a in items) {
+                    val original = a.optString("original"); val to = a.optString("to"); val offset = a.optInt("offset", -1)
+                    if (original.isEmpty() || to.isEmpty() || offset < 0) continue
+                    val abs = windowStart + offset
+                    if (abs < 0 || abs + original.length > before.length || before.substring(abs, abs + original.length) != original) continue
+                    applyIfIntact(original, to, before.substring(0, abs), if (a.optString("kind") == "tone") "tone" else "context")
+                }
             }
         }
     }

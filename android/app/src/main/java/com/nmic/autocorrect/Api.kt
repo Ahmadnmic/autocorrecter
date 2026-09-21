@@ -33,5 +33,15 @@ class Api(private val prefs: Prefs) {
         JSONObject(c.inputStream.bufferedReader().readText())
     } catch (e: Exception) { null }
 
+    /** GET an absolute HTTPS URL (release check). */
+    fun getUrl(url: String): JSONObject? = try {
+        if (!url.startsWith("https://")) null else {
+            val c = URL(url).openConnection() as HttpURLConnection
+            c.connectTimeout = 6000; c.readTimeout = 6000
+            c.setRequestProperty("accept", "application/vnd.github+json")
+            JSONObject(c.inputStream.bufferedReader().readText())
+        }
+    } catch (e: Exception) { null }
+
     fun arr(vararg items: JSONObject) = JSONArray().apply { items.forEach { put(it) } }
 }

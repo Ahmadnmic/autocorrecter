@@ -49,9 +49,18 @@ class AutocorrectSpellChecker : SpellCheckerService() {
                 }
                 val key = "$lang|$text"
                 val cached = cache[key]
-                val res = if (cached != null) cached[0] as JSONObject? else {
+                val longEnough = words.size >= 6
+                val res: JSONObject?
+                val proposed: JSONObject?
+                if (cached != null) { res = cached[0] as JSONObject?; proposed = cached[1] as JSONObject? } else {
                     val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("lang", lang).put("doc", text).put("aggressiveness", prefs.aggressiveness.toDouble()).put("typos", typos).put("recheck", recheck)
-                    api.post("/api/jev", body, 4000).also { cache[key] = arrayOf(it) }
+                    if (longEnough) body.put("prefilter", JSONObject().put("window", text.takeLast(900)))
+                    res = api.post("/api/jev", body, 4000)
+                    // Context pass: when Jev's pre-filter says the sentence holds a wrong word, Haiku proposes and Jev gates.
+                    proposed = if (longEnough && res?.optJSONObject("prefilter")?.optBoolean("callHaiku") == true)
+                        api.post("/api/propose", JSONObject().put("window", text.takeLast(900)).put("lang", res.optString("lang").ifEmpty { if (lang == "auto") "en" else lang }).put("aggressiveness", prefs.aggressiveness.toDouble()).put("skipPrefilter", true), 9000)
+                    else null
+                    cache[key] = arrayOf(res, proposed)
                 }
                 val infos = ArrayList<SuggestionsInfo>(); val offsets = ArrayList<Int>(); val lengths = ArrayList<Int>()
                 if (res != null) {
@@ -60,6 +69,14 @@ class AutocorrectSpellChecker : SpellCheckerService() {
                     for (j in 0 until ts.length()) { val d = ts.getJSONObject(j); if (d.optBoolean("replace") && d.has("to")) byId[d.getString("id")] = d.getString("to") to SuggestionsInfo.RESULT_ATTR_LOOKS_LIKE_TYPO }
                     val rs = res.optJSONArray("recheck") ?: JSONArray()
                     for (j in 0 until rs.length()) { val d = rs.getJSONObject(j); if (d.optBoolean("replace") && d.has("to")) byId["w" + d.getString("id").drop(1)] = d.getString("to") to grammarFlag() }
+                    val ap = proposed?.optJSONArray("approved") ?: JSONArray()
+                    val windowStart = text.length - minOf(text.length, 900)
+                    for (j in 0 until ap.length()) {
+                        val a = ap.getJSONObject(j)
+                        val abs = windowStart + a.optInt("offset", -1)
+                        val wi = words.indexOfFirst { it.range.first == abs && it.value == a.optString("original") }
+                        if (wi >= 0 && !byId.containsKey("w$wi") && a.optString("to").isNotEmpty()) byId["w$wi"] = a.getString("to") to grammarFlag()
+                    }
                     words.forEachIndexed { i, m ->
                         val hit = byId["w$i"] ?: return@forEachIndexed
                         infos.add(SuggestionsInfo(hit.second or SuggestionsInfo.RESULT_ATTR_HAS_RECOMMENDED_SUGGESTIONS, arrayOf(hit.first)))
