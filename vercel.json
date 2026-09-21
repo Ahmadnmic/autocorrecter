@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": [
+    "fra1"
+  ],
+  "functions": {
+    "app/api/**/route.ts": {
+      "maxDuration": 15,
+      "memory": 3009
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/warm",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/learn",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

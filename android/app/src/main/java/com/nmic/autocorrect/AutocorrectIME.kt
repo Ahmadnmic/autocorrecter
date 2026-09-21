@@ -1,0 +1,136 @@
+package com.nmic.autocorrect
+
+import android.graphics.Color
+import android.inputmethodservice.InputMethodService
+import android.os.Handler
+import android.os.Looper
+import android.text.InputType
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.TextView
+
+/**
+ * The keyboard service. Types characters, and after each boundary character runs the engine. Password and
+ * number fields are left alone. The strip above the keys shows colour-coded chips for each change; tap a chip
+ * to revert it.
+ */
+class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
+    private lateinit var prefs: Prefs
+    private lateinit var api: Api
+    private lateinit var engine: Engine
+    private lateinit var strip: LinearLayout
+    private lateinit var keyboard: KeyboardView
+    private val main = Handler(Looper.getMainLooper())
+    private var secureField = false
+
+    override fun onCreate() {
+        super.onCreate()
+        prefs = Prefs(this)
+        api = Api(prefs)
+        engine = Engine(prefs, api, this)
+        engine.refreshLibrary()
+    }
+
+    override fun onCreateInputView(): View {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#E8EAED")) }
+        strip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(4)) }
+        val scroll = HorizontalScrollView(this).apply { addView(strip); layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)); isHorizontalScrollBarEnabled = false }
+        keyboard = KeyboardView(this, this)
+        root.addView(scroll)
+        root.addView(keyboard)
+        renderStrip()
+        return root
+    }
+
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        val variation = (info?.inputType ?: 0) and InputType.TYPE_MASK_VARIATION
+        val cls = (info?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
+        secureField = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD || variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD || variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD || cls == InputType.TYPE_CLASS_NUMBER ||
+            variation == InputType.TYPE_TEXT_VARIATION_URI || variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS || variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+        updateShift()
+        if (::strip.isInitialized) renderStrip()
+    }
+
+    private fun ic(): InputConnection? = currentInputConnection
+
+    override fun onText(s: String) {
+        val c = ic() ?: return
+        c.commitText(s, 1)
+        if (!secureField && prefs.enabled && s.length == 1 && !TextUtil.isWordChar(s[0])) {
+            // one grammar-style fix locally: double space -> single, space before , . ! ?
+            val before = c.getTextBeforeCursor(3, 0)?.toString() ?: ""
+            if (s == " " && before.endsWith("  ")) { c.deleteSurroundingText(1, 0) }
+            else if (s in listOf(",", ".", "!", "?", ";", ":") && before.length >= 2 && before[before.length - 2] == ' ' && before.length >= 3 && TextUtil.isWordChar(before[before.length - 3])) {
+                c.deleteSurroundingText(2, 0); c.commitText(s, 1)
+            }
+            main.post { engine.onBoundary() }
+        }
+        updateShift()
+    }
+
+    override fun onBackspace() {
+        val c = ic() ?: return
+        val sel = c.getSelectedText(0)
+        if (!sel.isNullOrEmpty()) c.commitText("", 1) else c.deleteSurroundingText(1, 0)
+        updateShift()
+    }
+
+    override fun onEnter() {
+        val c = ic() ?: return
+        val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
+        if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED && (currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_FLAG_NO_ENTER_ACTION) ?: 0) == 0) c.performEditorAction(action)
+        else c.commitText("\n", 1)
+        updateShift()
+    }
+
+    /** Capitalise automatically at sentence starts, like the web app's grammar pass. */
+    private fun updateShift() {
+        val before = ic()?.getTextBeforeCursor(3, 0)?.toString() ?: ""
+        val start = before.isEmpty() || Regex("[.!?]\\s+$").containsMatchIn(before) || before.endsWith("\n")
+        if (::keyboard.isInitialized) keyboard.autoShift(start && !secureField)
+    }
+
+    // ---- Engine.IO
+    override fun textBeforeCursor(n: Int) = ic()?.getTextBeforeCursor(n, 0)?.toString() ?: ""
+    override fun textAfterCursor(n: Int) = ic()?.getTextAfterCursor(n, 0)?.toString() ?: ""
+    override fun replaceBeforeCursor(backFromCursor: Int, len: Int, to: String): Boolean {
+        val c = ic() ?: return false
+        c.beginBatchEdit()
+        c.deleteSurroundingText(len, 0)
+        c.commitText(to, 1)
+        c.endBatchEdit()
+        return true
+    }
+    override fun onChange(change: Engine.Change) = renderStrip()
+
+    private fun renderStrip() {
+        strip.removeAllViews()
+        if (!prefs.enabled) { strip.addView(chip("Autocorrect off · open the app to turn it on", "#9AA0A6", null)); return }
+        if (secureField) { strip.addView(chip("Password or number field: autocorrect paused", "#9AA0A6", null)); return }
+        val recent = engine.changes.take(6)
+        if (recent.isEmpty()) { strip.addView(chip("Inline Autocorrect", "#5F6368", null)); return }
+        for (ch in recent) {
+            val colour = when (ch.kind) { "typo" -> "#5F6368"; "recheck" -> "#B06000"; "translate" -> "#8E24AA"; "resolved" -> "#1A73E8"; else -> "#1A73E8" }
+            strip.addView(chip((if (ch.reverted) "↩ " else "") + "${ch.old} → ${ch.to}", if (ch.reverted) "#9AA0A6" else colour, if (ch.reverted) null else ch))
+        }
+    }
+
+    private fun chip(text: String, colour: String, change: Engine.Change?): View = TextView(this).apply {
+        this.text = text
+        setTextColor(Color.WHITE)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        setPadding(dp(10), dp(5), dp(10), dp(5))
+        background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Color.parseColor(colour)) }
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT); lp.marginEnd = dp(6); layoutParams = lp
+        if (change != null) setOnClickListener { if (engine.revert(change)) renderStrip() }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+}

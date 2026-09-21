@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Inline Autocorrect</title><link rel="stylesheet" href="shared.css">
+<style>
+.top{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0}
+.logo{width:34px;height:34px;border-radius:8px;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:19px}
+.top h1{font-size:15px;margin:0;flex:1}
+.sys{display:inline-flex;align-items:center;gap:6px;border-radius:16px;padding:6px 12px;border:1px solid var(--line);background:#fff;font:inherit;cursor:pointer}
+.sys i{width:9px;height:9px;border-radius:50%;background:#188038;display:inline-block}.sys.off{background:#fce8e6;border-color:#f5c6c2;color:#b3261e}.sys.off i{background:#d93025}
+main{padding:12px 16px 24px;display:flex;flex-direction:column;gap:14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0}.row>span:first-child{flex:0 0 100px;color:var(--muted)}
+.row input[type=range]{flex:1}.row select{flex:1;font:inherit}
+.hint{color:var(--muted);font-size:12px;margin:-2px 0 6px}
+.changes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-height:260px;overflow:auto}
+.changes li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border-radius:8px;background:#f8f9fa}
+.changes li.reverted{opacity:.5}.chg{display:flex;flex-direction:column;gap:3px}.chg .kind{align-self:flex-start}
+.revert{border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 9px;font-size:12px;cursor:pointer}.revert:hover{background:#fce8e6;border-color:#f5c6c2;color:#b3261e}
+.stats{display:grid;grid-template-columns:1fr auto;gap:3px 12px;font-size:12px;margin:0}.stats dt{color:var(--muted)}.stats dd{margin:0;text-align:right}
+.warn{background:#fef7e0;border:1px solid #f9dc9a;color:#7a4d00;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.45}
+.warn button{margin-top:6px;margin-right:6px;font:inherit;padding:5px 10px;border-radius:6px;border:1px solid #d9b45c;background:#fff;cursor:pointer}
+.muted{color:var(--muted)}.link{background:none;border:0;color:var(--blue);padding:0;font:inherit;cursor:pointer}
+</style></head><body>
+<div class="top"><div class="logo">✎</div><h1>Inline Autocorrect</h1><button id="sys" class="sys"><i></i> <span>System ON</span></button></div>
+<main>
+  <div id="perm" class="warn" style="display:none"></div>
+  <div class="card"><h2>Changes <span id="count" class="muted"></span></h2><ul id="changes" class="changes"></ul><p id="empty" class="muted">Nothing changed yet. Type in any app; each corrected word appears here and as a chip on screen.</p></div>
+  <div class="card"><h2>Settings</h2>
+    <label class="row"><span>Aggressiveness</span><input id="aggr" type="range" min="0" max="1" step="0.05"><span id="aggrv"></span></label>
+    <label class="row"><span>Language</span><select id="lang"><option value="auto">Auto</option><option value="en">English</option><option value="da">Dansk</option></select></label>
+    <p class="hint">Auto counts your words. Words from the other language are translated.</p>
+    <label class="row"><span>On-screen chips</span><select id="overlay"><option value="1">Show</option><option value="0">Hide</option></select></label>
+    <label class="row"><span>Chip corner</span><select id="corner"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option></select></label>
+  </div>
+  <div class="card"><h2>Activity</h2><dl class="stats"><dt>Changes applied / reverted</dt><dd id="s1"></dd><dt>Keyboard listener</dt><dd id="s2"></dd><dt>API</dt><dd id="s3"></dd><dt>App version</dt><dd id="s4"></dd><dt>Learned corrections</dt><dd id="s5"></dd></dl>
+  <p class="hint" style="margin-top:8px">Corrections are typed into the focused app as Backspaces plus the fixed text. Passwords and code: turn the system off first. <button class="link" id="web">Open web preview</button></p></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);const show=s=>s===''?'∅':s.replace(/ /g,'␣');
+function render(st){const s=st.settings;$('sys').className='sys '+(s.enabled?'':'off');$('sys').querySelector('span').textContent=s.enabled?'System ON':'System OFF';
+$('aggr').value=s.aggressiveness;$('aggrv').textContent=Math.round(s.aggressiveness*100);$('lang').value=s.lang;$('overlay').value=s.overlay?'1':'0';$('corner').value=s.overlayCorner;
+const live=st.changes.filter(c=>!c.reverted).length;$('count').textContent=live?`(${live})`:'';$('empty').style.display=st.changes.length?'none':'';
+$('changes').innerHTML=st.changes.map(c=>`<li class="${c.reverted?'reverted':''}"><div class="chg"><span class="diff"><s>${show(c.old)}</s> <span class="arrow">→</span> <b>${show(c.to)}</b></span><span class="kind ${c.kind}">${c.kind}</span></div>${c.reverted?'<span class="muted">reverted</span>':`<button class="revert" data-id="${c.id}">Revert</button>`}</li>`).join('');
+$('s1').textContent=`${st.stats.applied} / ${st.stats.reverted}`;$('s2').textContent=st.hook?'running':'not running';$('s3').textContent=st.api.replace(/^https?:\/\//,'');$('s4').textContent=st.version||'';$('s5').textContent=st.library?`${st.library.count} (v${st.library.version})`:'–';
+const p=st.permissions;let w='';if(st.platform==='darwin'){if(!p.accessibility)w+=`<b>Accessibility permission needed</b> so corrections can be typed into other apps. System Settings → Privacy &amp; Security → Accessibility → enable Inline Autocorrect.<br><button data-perm="acc">Open Accessibility settings</button>`;
+if(!st.hook)w+=`<b>Input Monitoring permission needed</b> so the app can see what you type. System Settings → Privacy &amp; Security → Input Monitoring → enable Inline Autocorrect, then click Retry.<br><button data-perm="input">Open Input Monitoring settings</button><button id="retry">Retry</button>`;}
+else if(!st.hook)w+=`<b>The keyboard listener is not running.</b> <button id="retry">Retry</button>`;
+$('perm').innerHTML=w;$('perm').style.display=w?'':'none';}
+$('sys').onclick=async()=>{const st=await ica.state();await ica.set('enabled',!st.settings.enabled)};
+$('aggr').oninput=e=>{$('aggrv').textContent=Math.round(e.target.value*100);ica.set('aggressiveness',Number(e.target.value))};
+$('lang').onchange=e=>ica.set('lang',e.target.value);$('overlay').onchange=e=>ica.set('overlay',e.target.value==='1');$('corner').onchange=e=>ica.set('overlayCorner',e.target.value);
+$('web').onclick=()=>ica.openWeb();
+document.body.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.id){await ica.revert(b.dataset.id)}else if(b.dataset.perm){ica.openPermissions(b.dataset.perm)}else if(b.id==='retry'){render(await ica.retryHook())}});
+ica.onState(render);ica.state().then(render);setInterval(()=>ica.state().then(render),3000);
+</script></body></html>

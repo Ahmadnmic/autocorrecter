@@ -1,0 +1,10 @@
+{
+  "version": "0.1.1",
+  "notes": "First release: system-wide typo fixes, confusables, merged words resolved with context, Danish/English translation, on-screen chips, tray settings, self-updating.",
+  "assets": {
+    "darwin-arm64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-mac-apple-silicon.zip",
+    "darwin-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-mac-intel.zip",
+    "win32-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-windows-x64.zip",
+    "android": ""
+  }
+}
