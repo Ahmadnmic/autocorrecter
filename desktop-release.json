@@ -5,6 +5,6 @@
     "darwin-arm64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-mac-apple-silicon.zip",
     "darwin-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-mac-intel.zip",
     "win32-x64": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.1-windows-x64.zip",
-    "android": ""
+    "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }
 }

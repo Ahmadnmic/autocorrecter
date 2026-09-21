@@ -995,7 +995,7 @@ function DownloadMenu({ release, onClose, inline }: { release: Release | null; o
         );
       })}
       <p className="muted small">
-        macOS (the app is not notarised): unzip, open the app once and dismiss the warning, then System Settings → Privacy &amp; Security → scroll down → <b>Open Anyway</b>. Then allow Accessibility and Input Monitoring when asked. Windows: unzip and run the exe (SmartScreen: More info → Run anyway).
+        Android/GrapheneOS: install the APK, then Settings → System → Keyboard → enable “Inline Autocorrect keyboard” and pick it. macOS (the app is not notarised): unzip, open the app once and dismiss the warning, then System Settings → Privacy &amp; Security → scroll down → <b>Open Anyway</b>. Then allow Accessibility and Input Monitoring when asked. Windows: unzip and run the exe (SmartScreen: More info → Run anyway).
         {release?.library ? ` Library: ${release.library.count} learned corrections.` : ""}
       </p>
     </div>
