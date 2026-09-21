@@ -3,7 +3,9 @@
 //   2. flip Electron fuses: no ELECTRON_RUN_AS_NODE, no NODE_OPTIONS, no --inspect, app only from asar,
 //      no extra file:// privileges (the app holds Input Monitoring / Accessibility grants, so the binary
 //      must not be usable as a generic Node runtime by another local process)
-//   3. ad-hoc codesign on macOS (until a Developer ID certificate is available)
+//   3. codesign on macOS with a stable self-signed identity ("Inline Autocorrect Release", keychain in
+//      ~/.config/inline-autocorrect). Gatekeeper still warns (only a Developer ID fixes that), but the designated
+//      requirement stays the same across builds, so Accessibility / Input Monitoring grants survive updates.
 //   4. zip, SHA-256, size
 //   5. write ../desktop-release.json and sign it with the Ed25519 release key (~/.config/inline-autocorrect)
 //   6. --upload: push the zips to Vercel Blob and write the URLs into the manifest
@@ -86,8 +88,17 @@ for (const t of targets) {
 
   fs.rmSync(zip, { force: true });
   if (t.platform === "darwin") {
-    sh("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+    const keychain = path.join(os.homedir(), ".config", "inline-autocorrect", "codesign.keychain-db");
+    const identity = "Inline Autocorrect Release";
+    if (fs.existsSync(keychain)) {
+      sh("security", ["unlock-keychain", "-p", process.env.ICA_KEYCHAIN_PASSWORD || "inline", keychain]);
+      sh("codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, appPath]);
+    } else {
+      console.warn("No release keychain found; signing ad-hoc (permissions will not survive updates).");
+      sh("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+    }
     sh("codesign", ["--verify", "--deep", "--strict", appPath]);
+    console.log(sh("codesign", ["-d", "-r-", appPath]).split("\n").find((l) => l.startsWith("designated")) || "");
     sh("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, zip]);
   } else {
     sh("ditto", ["-c", "-k", "--sequesterRsrc", outDir, zip]);

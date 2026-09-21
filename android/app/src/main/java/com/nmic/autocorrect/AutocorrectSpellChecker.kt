@@ -52,15 +52,41 @@ class AutocorrectSpellChecker : SpellCheckerService() {
                 val longEnough = words.size >= 6
                 val res: JSONObject?
                 val proposed: JSONObject?
-                if (cached != null) { res = cached[0] as JSONObject?; proposed = cached[1] as JSONObject? } else {
-                    val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("lang", lang).put("doc", text).put("aggressiveness", prefs.aggressiveness.toDouble()).put("typos", typos).put("recheck", recheck)
+                val extraOut: JSONObject
+                if (cached != null) { res = cached[0] as JSONObject?; proposed = cached[1] as JSONObject?; extraOut = (cached.getOrNull(2) as JSONObject?) ?: JSONObject() } else {
+                    val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("lang", lang).put("doc", text).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
                     if (longEnough) body.put("prefilter", JSONObject().put("window", text.takeLast(900)))
                     res = api.post("/api/jev", body, 4000)
                     // Context pass: when Jev's pre-filter says the sentence holds a wrong word, Haiku proposes and Jev gates.
                     proposed = if (longEnough && res?.optJSONObject("prefilter")?.optBoolean("callHaiku") == true)
-                        api.post("/api/propose", JSONObject().put("window", text.takeLast(900)).put("lang", (res?.optString("lang") ?: "").ifEmpty { if (lang == "auto") "en" else lang }).put("aggressiveness", prefs.aggressiveness.toDouble()).put("skipPrefilter", true), 9000)
+                        api.post("/api/propose", JSONObject().put("window", text.takeLast(900)).put("lang", (res?.optString("lang") ?: "").ifEmpty { if (lang == "auto") "en" else lang }).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", true), 9000)
                     else null
-                    cache[key] = arrayOf(res, proposed)
+                    // Stray words from the other language: translated (like the web app). Words the dictionary could not fix
+                    // with enough context after them: resolved late ("woyou" -> "would you").
+                    val resolvedLang = (res?.optString("lang") ?: "").ifEmpty { if (lang == "auto") "en" else lang }
+                    val ts0 = res?.optJSONArray("typos") ?: JSONArray()
+                    val extra = JSONObject()
+                    val toResolve = JSONArray()
+                    for (j in 0 until ts0.length()) {
+                        val d = ts0.getJSONObject(j)
+                        val wi = d.optString("id").drop(1).toIntOrNull() ?: continue
+                        val m = words.getOrNull(wi) ?: continue
+                        if (d.optBoolean("foreign")) {
+                            val tr = api.post("/api/decide", JSONObject().put("word", m.value).put("left", text.substring(0, m.range.first).takeLast(400)).put("lang", resolvedLang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("translate", true), 5000)
+                            if (tr != null && tr.optBoolean("replace") && tr.optString("kind") == "translate") extra.put("w$wi", tr.optString("to"))
+                        } else if (d.optBoolean("unresolved")) {
+                            val after = text.substring(m.range.last + 1)
+                            if (Regex("[\\p{L}'’-]+").findAll(after).count() >= 2 || Regex("[.!?]").containsMatchIn(after))
+                                toResolve.put(JSONObject().put("id", "w$wi").put("word", m.value).put("left", text.substring(0, m.range.first).takeLast(300)).put("right", after.take(200)))
+                        }
+                    }
+                    if (toResolve.length() > 0) {
+                        val rr = api.post("/api/resolve", JSONObject().put("items", toResolve).put("lang", resolvedLang).put("aggressiveness", prefs.aggressiveness.toDouble()), 9000)
+                        val ds = rr?.optJSONArray("decisions") ?: JSONArray()
+                        for (j in 0 until ds.length()) { val d = ds.getJSONObject(j); if (d.optBoolean("replace") && d.has("to")) extra.put(d.getString("id"), d.getString("to")) }
+                    }
+                    cache[key] = arrayOf(res, proposed, extra)
+                    extraOut = extra
                 }
                 val infos = ArrayList<SuggestionsInfo>(); val offsets = ArrayList<Int>(); val lengths = ArrayList<Int>()
                 if (res != null) {
@@ -77,6 +103,7 @@ class AutocorrectSpellChecker : SpellCheckerService() {
                         val wi = words.indexOfFirst { it.range.first == abs && it.value == a.optString("original") }
                         if (wi >= 0 && !byId.containsKey("w$wi") && a.optString("to").isNotEmpty()) byId["w$wi"] = a.getString("to") to grammarFlag()
                     }
+                    for (k in extraOut.keys()) if (!byId.containsKey(k)) byId[k] = extraOut.getString(k) to grammarFlag()
                     words.forEachIndexed { i, m ->
                         val hit = byId["w$i"] ?: return@forEachIndexed
                         infos.add(SuggestionsInfo(hit.second or SuggestionsInfo.RESULT_ATTR_HAS_RECOMMENDED_SUGGESTIONS, arrayOf(hit.first)))

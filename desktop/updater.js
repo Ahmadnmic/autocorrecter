@@ -217,23 +217,57 @@ async function installUpdate(asset, version) {
   } else {
     await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath ${pq(zip)} -DestinationPath ${pq(unpacked)} -Force`]);
     const exeName = path.basename(app.getPath("exe"));
-    if (!fs.existsSync(path.join(unpacked, exeName))) throw new Error("The update archive does not contain the app.");
+    // The archive may hold the files at its root or in one top-level folder.
+    let src = unpacked;
+    if (!fs.existsSync(path.join(src, exeName))) {
+      const sub = fs.readdirSync(unpacked).map((n) => path.join(unpacked, n)).find((p) => fs.existsSync(path.join(p, exeName)));
+      if (!sub) throw new Error("The update archive does not contain the app.");
+      src = sub;
+    }
+    const log = path.join(app.getPath("userData"), "update.log");
+    const exe = path.join(target, exeName);
+    const oldExe = path.join(currentRoot, exeName);
+    const procName = exeName.replace(/\.exe$/i, "");
+    // Everything below runs after this process has exited. Copies over the existing files (no deletion), verifies
+    // the new app really came up, and otherwise relaunches the old one. Every step is logged to update.log.
     const ps = [
-      `while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
+      `$ErrorActionPreference = 'Continue'`,
+      `function Log($m) { Add-Content -LiteralPath ${pq(log)} -Value ("[" + (Get-Date -Format s) + "] " + $m) }`,
+      `Log 'apply start, waiting for pid ${process.pid}'`,
+      `$n = 0; while ((Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) -and $n -lt 300) { Start-Sleep -Milliseconds 200; $n++ }`,
+      `Start-Sleep -Milliseconds 500`,
       `New-Item -ItemType Directory -Force -Path ${pq(target)} | Out-Null`,
-      `robocopy ${pq(unpacked)} ${pq(target)} /MIR /R:10 /W:1 | Out-Null`,
-      `if ($LASTEXITCODE -lt 8 -and (Test-Path ${pq(path.join(target, exeName))})) {`,
-      `  Start-Process -FilePath ${pq(path.join(target, exeName))}`,
-      `} else {`,
-      `  Start-Process -FilePath ${pq(path.join(currentRoot, exeName))}`,
+      `Log 'copying'`,
+      `robocopy ${pq(src)} ${pq(target)} /E /R:10 /W:1 /XD __MACOSX /NFL /NDL /NJH /NJS | Out-Null`,
+      `$rc = $LASTEXITCODE; Log ("robocopy exit " + $rc)`,
+      `$started = $false`,
+      `if ($rc -lt 8 -and (Test-Path -LiteralPath ${pq(exe)})) {`,
+      `  try { Start-Process -FilePath ${pq(exe)} -WorkingDirectory ${pq(target)}; Log 'started new'; $started = $true } catch { Log ("start new failed: " + $_) }`,
       `}`,
+      `Start-Sleep -Seconds 4`,
+      `if (-not (Get-Process -Name ${pq(procName)} -ErrorAction SilentlyContinue)) {`,
+      `  Log 'new app not running, starting previous'`,
+      `  try { Start-Process -FilePath ${pq(oldExe)} -WorkingDirectory ${pq(currentRoot)} } catch { Log ("start old failed: " + $_) }`,
+      `}`,
+      `Log 'done'`,
       `Remove-Item -LiteralPath ${pq(work)} -Recurse -Force -ErrorAction SilentlyContinue`,
     ].join("\n");
-    const scriptPath = path.join(work, "apply.ps1");
-    fs.writeFileSync(scriptPath, ps);
-    spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    // -EncodedCommand is not subject to the script execution policy and needs no script file.
+    const encoded = Buffer.from(ps, "utf16le").toString("base64");
+    fs.appendFileSync(log, `[${new Date().toISOString()}] update ${version}: downloaded and verified, handing over\n`);
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded], { detached: true, stdio: "ignore", windowsHide: true, cwd: os.tmpdir() });
+    child.unref();
   }
-  setTimeout(() => app.exit(0), 500);
+  // Close helpers that would otherwise outlive the app and keep its folder busy, then exit.
+  try {
+    disposeHook?.();
+  } catch {}
+  setTimeout(() => app.exit(0), 700);
+}
+let disposeHook = null;
+/** The app registers what must be shut down before the process exits for an update (typer helper, key hook). */
+function onBeforeExit(fn) {
+  disposeHook = fn;
 }
 
 /**
@@ -269,4 +303,4 @@ async function offerMoveToApplications() {
   return true;
 }
 
-module.exports = { checkForUpdate, targetKey, onLibraryRelease, offerMoveToApplications, verifyManifest, isTemporaryLocation };
+module.exports = { checkForUpdate, targetKey, onLibraryRelease, offerMoveToApplications, verifyManifest, isTemporaryLocation, onBeforeExit };

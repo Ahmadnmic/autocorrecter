@@ -1,21 +1,21 @@
 {
-  "version": "0.1.5",
-  "notes": "0.1.5: corrections are now applied in place (no more Backspace and retyping), context fixes from Claude (wrong word for the meaning, grammar in context) and a Tone setting, like the web app.",
+  "version": "0.1.6",
+  "notes": "0.1.6: macOS permissions now survive updates (stable signing identity; allow once more after this update), Retry restarts the keyboard listener, Windows update handover fixed and logged (update.log), in-place corrections, context fixes and Tone.",
   "assets": {
     "darwin-arm64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.5-mac-apple-silicon.zip",
-      "sha256": "23a54436107ed79b760c70e8c999d6562b7463f951e805b8ced1447ccb2e8940",
-      "size": 127258258
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.6-mac-apple-silicon.zip",
+      "sha256": "9cf66c6d96b6e048ecf181bddea23d426737b7583a7b3499bd086a59962d7e5f",
+      "size": 127263195
     },
     "darwin-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.5-mac-intel.zip",
-      "sha256": "6224a4bed6bc212ee3a17f8a5ac95370478aadb035dbc192bbb4496bc5ec3c6f",
-      "size": 134245055
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.6-mac-intel.zip",
+      "sha256": "fd33c6b642ef5bbf7272d478caa678406e5a4df75c4f4b1587fef828831d9fb8",
+      "size": 134260867
     },
     "win32-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.5-windows-x64.zip",
-      "sha256": "1a6259e758b67ce3f81f250c7d13696fd160ecd7eac8179eb694d3229d440b2a",
-      "size": 158663533
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.6-windows-x64.zip",
+      "sha256": "da8c85de83f100921e95180762f7d3e76da300d0f2d6a4c78bd25da53a27f0cb",
+      "size": 158664566
     },
     "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }

@@ -34,7 +34,7 @@ function render(st) {
   st.startedAt = st.startedAt || 0;
   if (st.platform === "darwin") {
     if (!p.accessibility) w += `<b>Accessibility permission needed</b> so corrections can be typed into other apps. System Settings → Privacy &amp; Security → Accessibility → enable Inline Autocorrect.<br><button data-perm="acc">Open Accessibility settings</button>`;
-    if (!st.hook || (st.keyEvents === 0 && Date.now() - st.startedAt > 20000)) w += `<b>Input Monitoring permission needed</b> so the app can see what you type. System Settings → Privacy &amp; Security → Input Monitoring → enable Inline Autocorrect, then click Retry.<br><button data-perm="input">Open Input Monitoring settings</button><button id="retry">Retry</button>`;
+    if (!st.hook || (st.keyEvents === 0 && Date.now() - st.startedAt > 20000)) w += `<b>Input Monitoring permission needed</b> so the app can see what you type. System Settings → Privacy &amp; Security → Input Monitoring → enable Inline Autocorrect, then click Retry.<br><span class="muted">If the switch is already on but this message stays after Retry: select Inline Autocorrect in that list, remove it with the − button, then quit and reopen the app and allow it again. (Older versions were re-registered by macOS on every update; from 0.1.6 the permission survives updates.)</span><br><button data-perm="input">Open Input Monitoring settings</button><button id="retry">Retry</button>`;
   } else if (!st.hook) w += `<b>The keyboard listener is not running.</b> <button id="retry">Retry</button>`;
   $("perm").innerHTML = w;
   $("perm").style.display = w ? "" : "none";

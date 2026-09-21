@@ -4,7 +4,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { Engine } = require("./engine.js");
 const { makeTyper } = require("./typer.js");
-const { checkForUpdate, onLibraryRelease, offerMoveToApplications } = require("./updater.js");
+const { checkForUpdate, onLibraryRelease, offerMoveToApplications, onBeforeExit } = require("./updater.js");
 const { detectLayout } = require("./keymap.js");
 const { makeKeyHandler } = require("./hook.js");
 
@@ -69,7 +69,7 @@ let uiohook = null;
 let UiohookKey = null;
 let layout = "us";
 let keyEvents = 0;
-const startedAt = Date.now();
+let startedAt = Date.now();
 let lastKeyAt = 0;
 
 function loadSettings() {
@@ -271,6 +271,14 @@ app.whenReady().then(async () => {
   });
 
   onLibraryRelease(() => engine.refreshLibrary());
+  onBeforeExit(() => {
+    try {
+      uiohook?.stop();
+    } catch {}
+    try {
+      typer.dispose?.();
+    } catch {}
+  });
 
   if (process.platform === "darwin") {
     const trusted = systemPreferences.isTrustedAccessibilityClient(true); // prompts once
@@ -298,6 +306,9 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   try {
     uiohook?.stop();
+  } catch {}
+  try {
+    engine?.apply?.dispose?.();
   } catch {}
 });
 
@@ -336,6 +347,14 @@ ipcMain.handle("openPermissions", (e, which) => {
 });
 ipcMain.handle("retryHook", (e) => {
   if (!trustedSender(e)) return null;
+  // A listener created while Input Monitoring was denied never delivers events, so stop it and start afresh.
+  try {
+    uiohook?.removeAllListeners?.();
+    uiohook?.stop();
+  } catch {}
+  hookStarted = false;
+  keyEvents = 0;
+  startedAt = Date.now();
   startHook();
   return pushState();
 });
