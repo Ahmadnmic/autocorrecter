@@ -19,7 +19,19 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(Button(this).apply { text = "Open spell checker settings"; setOnClickListener {
             try { startActivity(Intent("android.settings.SPELL_CHECKER_SETTINGS")) } catch (e: Exception) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
         } })
-        root.addView(label("Optional: the keyboard, which corrects automatically while you type (like the desktop app). Enable it, then pick it from the keyboard switcher."))
+        val status = TextView(this).apply { textSize = 13f; setPadding(0, pad / 2, 0, 4) }
+        root.addView(label("Optional: the keyboard, which corrects automatically while you type (like the desktop app). Android never hides the stock keyboard; you switch the current one: 1. Enable, 2. Choose, or tap the small keyboard icon at the bottom-right of the screen while typing."))
+        root.addView(status)
+        fun refreshStatus() {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            val me = "$packageName/.AutocorrectIME"
+            val enabled = imm.enabledInputMethodList.any { it.id == me || it.id.endsWith("/.AutocorrectIME") && it.packageName == packageName }
+            val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
+            val isCurrent = current.startsWith("$packageName/")
+            status.text = when { isCurrent -> "✓ Inline Autocorrect is the current keyboard."; enabled -> "Enabled, but not selected. Tap “Choose keyboard” and pick Inline Autocorrect."; else -> "Not enabled yet. Tap “Enable keyboard” and switch it on." }
+        }
+        refreshStatus()
+        window.decorView.viewTreeObserver.addOnWindowFocusChangeListener { if (it) refreshStatus() }
         root.addView(Button(this).apply { text = "Enable keyboard"; setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } })
         root.addView(Button(this).apply { text = "Choose keyboard"; setOnClickListener { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() } })
         root.addView(Switch(this).apply { text = "Autocorrect on"; isChecked = prefs.enabled; setOnCheckedChangeListener { _, v -> prefs.enabled = v } })
