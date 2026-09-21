@@ -38,6 +38,22 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
 
     fun refreshLibrary() = api.pool.execute { api.get("/api/library")?.let { library = it } }
 
+    /**
+     * Called after any character was committed (the character is the last one before the cursor). Runs the local
+     * grammar pass (spacing, punctuation, capitals); returns true when it changed something.
+     */
+    fun onChar(lang: String? = null): Boolean {
+        if (!prefs.enabled) return false
+        val before = io.textBeforeCursor(200)
+        if (before.isEmpty()) return false
+        val f = Grammar.fix(before, before.length - 1, lang ?: currentLang(before)) ?: return false
+        if (f.start < before.length - 4) return false
+        val old = before.substring(f.start, f.end)
+        val tail = before.substring(f.end)
+        if (old == f.to) return false
+        return apply(old, f.to, tail, "grammar", before.substring(0, f.start))
+    }
+
     /** Called after a boundary character was committed. */
     fun onBoundary() {
         if (!prefs.enabled) return
@@ -78,7 +94,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (typos.length() == 0 && recheck.length() == 0 && !wantContext) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
         if (probe) langProbe = 0
-        val body = JSONObject().put("client", "android").put("session", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("typos", typos).put("recheck", recheck)
+        val body = JSONObject().put("client", "android").put("session", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
         if (probe) body.put("doc", before)
         if (wantContext) { body.put("prefilter", JSONObject().put("window", window)); wordsSinceContext = 0; lastContextWindow = window; contextInflight = true }
         val anchorLeft = before.substring(0, w.start)
@@ -110,7 +126,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
 
     /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
     private fun contextPass(window: String, lang: String) {
-        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("skipPrefilter", true)
+        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", true)
         api.pool.execute {
             val res = api.post("/api/propose", body, 9000)
             main.post {
@@ -198,6 +214,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (to == old || never.contains(old.lowercase()) && kind != "grammar") return false
         val ok = io.replaceBeforeCursor(old.length + tail.length, old.length + tail.length, to + tail)
         if (!ok) return false
+        if (kind == "grammar" && old.isBlank() && to.isBlank()) return true // spacing only: not worth a chip
         val c = Change("${System.currentTimeMillis()}-${changes.size}", old, to, kind)
         changes.add(0, c)
         if (changes.size > 100) changes.removeAt(changes.size - 1)

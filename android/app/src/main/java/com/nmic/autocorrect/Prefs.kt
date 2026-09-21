@@ -8,6 +8,7 @@ class Prefs(ctx: Context) {
     var enabled: Boolean get() = p.getBoolean("enabled", true); set(v) = p.edit().putBoolean("enabled", v).apply()
     var aggressiveness: Float get() = p.getFloat("aggr", 0.5f); set(v) = p.edit().putFloat("aggr", v).apply()
     var lang: String get() = p.getString("lang", "auto")!!; set(v) = p.edit().putString("lang", v).apply()
+    var tone: String get() = p.getString("tone", "as-written")!!; set(v) = p.edit().putString("tone", v).apply()
     // Only HTTPS endpoints: typed text must never leave the phone in clear.
     var apiBase: String get() = p.getString("api", DEFAULT_API)!!.let { if (it.startsWith("https://")) it else DEFAULT_API }
         set(v) = p.edit().putString("api", if (v.startsWith("https://")) v.trimEnd('/') else DEFAULT_API).apply()

@@ -58,7 +58,7 @@ class AutocorrectSpellChecker : SpellCheckerService() {
                     res = api.post("/api/jev", body, 4000)
                     // Context pass: when Jev's pre-filter says the sentence holds a wrong word, Haiku proposes and Jev gates.
                     proposed = if (longEnough && res?.optJSONObject("prefilter")?.optBoolean("callHaiku") == true)
-                        api.post("/api/propose", JSONObject().put("window", text.takeLast(900)).put("lang", res.optString("lang").ifEmpty { if (lang == "auto") "en" else lang }).put("aggressiveness", prefs.aggressiveness.toDouble()).put("skipPrefilter", true), 9000)
+                        api.post("/api/propose", JSONObject().put("window", text.takeLast(900)).put("lang", (res?.optString("lang") ?: "").ifEmpty { if (lang == "auto") "en" else lang }).put("aggressiveness", prefs.aggressiveness.toDouble()).put("skipPrefilter", true), 9000)
                     else null
                     cache[key] = arrayOf(res, proposed)
                 }

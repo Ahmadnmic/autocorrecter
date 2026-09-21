@@ -77,14 +77,10 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
     override fun onText(s: String) {
         val c = ic() ?: return
         c.commitText(s, 1)
-        if (!secureField && prefs.enabled && s.length == 1 && !TextUtil.isWordChar(s[0])) {
-            // one grammar-style fix locally: double space -> single, space before , . ! ?
-            val before = c.getTextBeforeCursor(3, 0)?.toString() ?: ""
-            if (s == " " && before.endsWith("  ")) { c.deleteSurroundingText(1, 0) }
-            else if (s in listOf(",", ".", "!", "?", ";", ":") && before.length >= 2 && before[before.length - 2] == ' ' && before.length >= 3 && TextUtil.isWordChar(before[before.length - 3])) {
-                c.deleteSurroundingText(2, 0); c.commitText(s, 1)
-            }
-            main.post { engine.onBoundary() }
+        if (!secureField && prefs.enabled) {
+            // Local grammar pass on every character (spacing, punctuation, capitals), then the word passes at a boundary.
+            engine.onChar()
+            if (s.length == 1 && !TextUtil.isWordChar(s[0])) main.post { engine.onBoundary() }
         }
         updateShift()
     }
@@ -131,7 +127,7 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         val recent = engine.changes.take(6)
         if (recent.isEmpty()) { strip.addView(chip("Inline Autocorrect", "#5F6368", null)); return }
         for (ch in recent) {
-            val colour = when (ch.kind) { "typo" -> "#5F6368"; "recheck" -> "#B06000"; "translate" -> "#8E24AA"; "resolved" -> "#1A73E8"; else -> "#1A73E8" }
+            val colour = when (ch.kind) { "typo" -> "#5F6368"; "recheck" -> "#B06000"; "translate" -> "#8E24AA"; "resolved" -> "#1A73E8"; "context" -> "#1A73E8"; "tone" -> "#00897B"; "grammar" -> "#E8710A"; else -> "#1A73E8" }
             strip.addView(chip((if (ch.reverted) "↩ " else "") + "${ch.old} → ${ch.to}", if (ch.reverted) "#9AA0A6" else colour, if (ch.reverted) null else ch))
         }
     }
