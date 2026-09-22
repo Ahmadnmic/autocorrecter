@@ -75,11 +75,19 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
 
     private fun ic(): InputConnection? = currentInputConnection
 
-    private val idle = Runnable { engine.onIdle() }
+    // After the last key: a pass at 0.9 s, and follow-ups at 3 s and 5 s so late resolutions and translations that the
+    // first pass started still land while the writer waits. The status dot stays red until everything has settled.
+    private val idle = Runnable { engine.onIdle(); renderStrip() }
+    private val dotTick = object : Runnable { override fun run() { renderDot(); if (engine.busy()) main.postDelayed(this, 400) } }
+    private fun scheduleIdle() {
+        main.removeCallbacks(idle)
+        for (t in longArrayOf(900, 3000, 5000)) main.postDelayed(idle, t)
+        main.removeCallbacks(dotTick); main.post(dotTick)
+    }
     override fun onText(s: String) {
         val c = ic() ?: return
         c.commitText(s, 1)
-        main.removeCallbacks(idle); main.postDelayed(idle, 900)
+        scheduleIdle()
         if (!secureField && prefs.enabled) {
             // Local grammar pass on every character (spacing, punctuation, capitals), then the word passes at a boundary,
             // synchronously and on a snapshot: the finished word is the one before this boundary, whatever comes next.
@@ -91,7 +99,7 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
 
     override fun onBackspace() {
         val c = ic() ?: return
-        main.removeCallbacks(idle); main.postDelayed(idle, 900)
+        scheduleIdle()
         val sel = c.getSelectedText(0)
         if (!sel.isNullOrEmpty()) c.commitText("", 1) else c.deleteSurroundingText(1, 0)
         updateShift()
@@ -174,10 +182,21 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
     private fun langLabel() = when (prefs.lang) { "en" -> "English"; "da" -> "Dansk"; else -> "Auto" }
     override fun onChange(change: Engine.Change) = renderStrip()
 
+    private var dot: View? = null
+    /** Small status dot at the start of the strip: red while corrections are still being decided, green when settled. */
+    private fun renderDot() {
+        val d = dot ?: return
+        val busy = engine.busy()
+        d.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Color.parseColor(if (busy) "#D93025" else "#1E8E3E")) }
+        d.contentDescription = if (busy) "Still checking" else "All checked"
+    }
     private fun renderStrip() {
         strip.removeAllViews()
         if (!prefs.enabled) { strip.addView(chip("Autocorrect off · open the app to turn it on", "#9AA0A6", null)); return }
         if (secureField) { strip.addView(chip("Password or number field: autocorrect paused", "#9AA0A6", null)); return }
+        dot = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginEnd = dp(8); marginStart = dp(2) } }
+        strip.addView(dot)
+        renderDot()
         val recent = engine.changes.take(6)
         if (recent.isEmpty()) { strip.addView(chip("Inline Autocorrect", "#5F6368", null)); return }
         for (ch in recent) {

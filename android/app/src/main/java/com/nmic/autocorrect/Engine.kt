@@ -27,7 +27,10 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     val changes = ArrayList<Change>()
     private val never = HashSet<String>()
     private val unresolved = LinkedHashMap<String, Unresolved>()
-    private var unresolvedSeq = 0 // ids must survive the server's sanitiser ([A-Za-z0-9_:.-]), so they are plain counters
+    private var unresolvedSeq = 0
+    private val inflight = java.util.concurrent.atomic.AtomicInteger(0)
+    /** True while anything is still being decided or waiting for more text: the strip shows a red dot until it is false. */
+    fun busy(): Boolean = inflight.get() > 0 || contextInflight || resolving || unresolved.isNotEmpty() || pendingForeign != null // ids must survive the server's sanitiser ([A-Za-z0-9_:.-]), so they are plain counters
     private data class Unresolved(val word: String, val leftAnchor: String, var tries: Int = 0)
     private var lang: String? = null
     private var langProbe = 0
@@ -88,6 +91,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val table = TextUtil.commonTypos[lang]?.get(bare) ?: if (learned != null && !neverLib && (learned.optString("lang", lang) == lang)) learned.optString("to") else null
         if (table != null && !never.contains(w.word.lowercase())) {
             apply(w.word, TextUtil.transferCase(w.word, table), tail, "typo", before.substring(0, w.start))
+            flushPendingForeign(lang, before)
             resolveLate()
             return
         }
@@ -113,6 +117,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val boundary = before.lastOrNull() ?: ' '
         val window = before.takeLast(600)
         val wantContext = !contextInflight && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 3 && (wordsSinceContext >= 2 || boundary in ".!?") && System.currentTimeMillis() - lastContextAt > 1200
+        if (typos.length() == 0) flushPendingForeign(lang, before) // the new word is not one the server checks; the earlier foreign word stands alone
         if (typos.length() == 0 && recheck.length() == 0 && !wantContext) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
         if (probe) langProbe = 0
@@ -120,8 +125,10 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (probe) body.put("doc", before)
         if (wantContext) { body.put("prefilter", JSONObject().put("window", window)); wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextInflight = true }
         val anchorLeft = before.substring(0, w.start)
+        inflight.incrementAndGet()
         api.pool.execute {
-            val res = api.post("/api/jev", body) ?: return@execute
+            val res = try { api.post("/api/jev", body) } finally { inflight.decrementAndGet() }
+            if (res == null) { main.post { contextInflight = false }; return@execute }
             main.post {
                 res.optString("lang").takeIf { it.isNotEmpty() }?.let { this.lang = it }
                 val ts = res.optJSONArray("typos") ?: JSONArray()
@@ -161,20 +168,39 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
      * the context pass on the whole current text now, telling the server the window is complete.
      */
     fun onIdle() {
-        if (!prefs.enabled || contextInflight) return
+        if (!prefs.enabled) return
         val before = io.textBeforeCursor(600)
+        flushPendingForeign(currentLang(before), before)
+        resolveLate(paused = true)
+        if (contextInflight) return
         val window = before.takeLast(600)
         if (window == lastContextWindow || window.trim().split(Regex("\\s+")).size < 3) return
         lastContextWindow = window; lastContextAt = System.currentTimeMillis(); wordsSinceContext = 0; contextInflight = true
         contextPass(window, currentLang(before), paused = true)
-        resolveLate(paused = true)
+    }
+
+    /**
+     * A foreign word that was waiting for the next word: translate it now, unless the paragraph around it already
+     * leans to the other language (then the writer switched language and the word is not stray).
+     */
+    private fun flushPendingForeign(lang: String, before: String) {
+        val (pw, pl) = pendingForeign ?: return
+        pendingForeign = null
+        if (TextUtil.shouldSkip(pw)) return
+        val para = before.substring(before.lastIndexOf('\n') + 1)
+        val sc = TextUtil.detectLangScore(para.takeLast(300))
+        val other = if (lang == "da") sc.en else sc.da
+        val own = if (lang == "da") sc.da else sc.en
+        if (other > own) { if (prefs.lang == "auto") { this.lang = if (lang == "da") "en" else "da"; langProbe = 0 }; return }
+        translate(pw, pl, lang)
     }
 
     /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
     private fun contextPass(window: String, lang: String, paused: Boolean = false) {
         val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", true).put("paused", paused)
+        inflight.incrementAndGet()
         api.pool.execute {
-            val res = api.post("/api/propose", body, 9000)
+            val res = try { api.post("/api/propose", body, 9000) } finally { inflight.decrementAndGet() }
             main.post {
                 contextInflight = false
                 val approved = res?.optJSONArray("approved") ?: JSONArray()
@@ -198,8 +224,10 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
 
     private fun translate(word: String, anchorLeft: String, lang: String) {
         val body = JSONObject().put("word", word).put("left", anchorLeft.takeLast(600)).put("lang", if (prefs.lang == "auto") lang else prefs.lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("translate", true)
+        inflight.incrementAndGet()
         api.pool.execute {
-            val res = api.post("/api/decide", body) ?: return@execute
+            val res = try { api.post("/api/decide", body) } finally { inflight.decrementAndGet() }
+            if (res == null) return@execute
             if (res.optBoolean("replace") && res.optString("kind") == "translate") main.post { applyIfIntact(word, res.getString("to"), anchorLeft, "translate") }
         }
     }
@@ -225,8 +253,9 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (ready.isEmpty()) return
         resolving = true
         val body = JSONObject().put("items", items).put("lang", currentLang(before)).put("aggressiveness", prefs.aggressiveness.toDouble())
+        inflight.incrementAndGet()
         api.pool.execute {
-            val res = api.post("/api/resolve", body)
+            val res = try { api.post("/api/resolve", body) } finally { inflight.decrementAndGet() }
             main.post {
                 resolving = false
                 val ds = res?.optJSONArray("decisions") ?: JSONArray()
