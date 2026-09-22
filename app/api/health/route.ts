@@ -1,6 +1,6 @@
 // Reports whether the two API keys are set and whether a minimal live call succeeds.
 import { NextResponse } from "next/server";
-import { jevConfigured, jevDecide, jevEndpointName, jevLimited } from "@/lib/jev";
+import { jevConfigured, jevDecide, deciderName, jevLimited } from "@/lib/jev";
 import { checkSecret, rateLimit, NO_STORE } from "@/lib/guard";
 import { anthropicConfigured } from "@/lib/haiku";
 import { anthropicKey } from "@/lib/env";
@@ -34,14 +34,14 @@ export async function GET(req: Request) {
   if (!jev.configured) jev.note = "JEV_API_KEY not set";
   else if (!force) {
     jev.ok = true;
-    jev.note = `configured via ${jevEndpointName()}${jevLimited() ? " (community key, low rate limit)" : ""}`;
+    jev.note = `configured via ${deciderName()}${jevLimited() ? " (community key, low rate limit)" : ""}`;
   } else {
     try {
       const t = Date.now();
       const a = await jevDecide({ sentence: "I put the keys their." }, { wrong_word: { type: "noul", instructions: "Does the sentence contain a wrong word?" } }, 4000);
       jev.ms = Date.now() - t;
       jev.ok = typeof a.wrong_word.noul === "number";
-      jev.note = jev.ok ? `live call ok via ${jevEndpointName()}, noul=${a.wrong_word.noul?.toFixed(2)}` : `live call via ${jevEndpointName()} returned an unrecognised shape`;
+      jev.note = jev.ok ? `live call ok via ${deciderName()}, noul=${a.wrong_word.noul?.toFixed(2)}` : `live call via ${deciderName()} returned an unrecognised shape`;
       jev.shape = a.wrong_word.raw;
     } catch (e) {
       jev.note = `live call failed: ${(e as Error).message}`;
@@ -70,7 +70,7 @@ export async function GET(req: Request) {
     }
   }
 
-  const body = { spell, jev: { ...jev, host: jevEndpointName(), limited: jevLimited() }, anthropic, region: process.env.VERCEL_REGION ?? "local", build: process.env.NEXT_PUBLIC_BUILD ?? "", at: new Date().toISOString() };
+  const body = { spell, jev: { ...jev, host: deciderName(), limited: jevLimited() }, anthropic, region: process.env.VERCEL_REGION ?? "local", build: process.env.NEXT_PUBLIC_BUILD ?? "", at: new Date().toISOString() };
   cached = { at: Date.now(), body };
   return NextResponse.json(body, { headers: NO_STORE });
 }

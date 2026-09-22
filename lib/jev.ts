@@ -1,6 +1,9 @@
-import { aiGatewayKey, jevKey } from "./env";
-// Server-only client for the Jev decision API (https://www.jevai.org/docs).
-// Jev answers choice / noul / score questions over a `state` object. It never generates text.
+import { aiGatewayKey, jevKey, layaKey, layaUrl } from "./env";
+// Server-only client for the decision model: Laya (open source, self-hosted) or the hosted Jev API. Both answer the
+// same choice / noul / score questions over a `state` object and neither generates text, so the callers are identical.
+//
+// With LAYA_URL set, every decision goes to Laya (services/laya). Jev, if a key is configured, is then only the
+// fallback for a request Laya could not answer, so a restart or a cold container never stops corrections.
 
 export type JevQuestion =
   | { type: "choice"; instructions: string; criteria: Record<string, string> }
@@ -41,7 +44,45 @@ export function jevLimited(): boolean {
 
 
 export function jevConfigured(): boolean {
-  return !!(aiGatewayKey() || jevKey());
+  return !!(layaUrl() || aiGatewayKey() || jevKey());
+}
+
+/** Which engine serves decisions right now: "laya" once it has answered, otherwise the Jev endpoint in use. */
+export function deciderName(): string {
+  return layaUrl() ? (layaHealthy ? "laya" : "laya (starting)") : jevEndpointName();
+}
+let layaHealthy = false;
+let layaFailedAt = 0;
+
+/** Laya speaks the same {state, questions} -> {answers} shape; a failure here falls through to Jev. */
+async function postLaya(body: Record<string, unknown>, timeoutMs: number): Promise<{ res: Response; json: unknown } | null> {
+  const url = layaUrl();
+  if (!url) return null;
+  // After a failure, stop hammering a service that is still downloading its checkpoint or restarting.
+  if (!layaHealthy && Date.now() - layaFailedAt < 10_000) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const key = layaKey();
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new JevError(`Laya HTTP ${res.status}`, res.status, json);
+    layaHealthy = true;
+    return { res, json };
+  } catch (e) {
+    layaHealthy = false;
+    layaFailedAt = Date.now();
+    if (!jevKey() && !aiGatewayKey()) throw e; // nothing to fall back to: the caller sees the real error
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export class JevError extends Error {
@@ -98,9 +139,9 @@ export async function jevDecide(
   questions: Record<string, JevQuestion>,
   timeoutMs = 1500,
 ): Promise<Record<string, JevAnswer>> {
-  if (!jevConfigured()) throw new JevError("JEV_API_KEY is not set", 503);
+  if (!jevConfigured()) throw new JevError("No decision engine configured (LAYA_URL or JEV_API_KEY)", 503);
 
-  const { res, json } = await post({ state, questions }, timeoutMs);
+  const { res, json } = (await postLaya({ state, questions }, timeoutMs)) ?? (await post({ state, questions }, timeoutMs));
   if (!res.ok) throw new JevError(`Jev HTTP ${res.status}: ${JSON.stringify(json).slice(0, 200)}`, res.status, json);
 
   const obj = (json ?? {}) as Record<string, unknown>;
