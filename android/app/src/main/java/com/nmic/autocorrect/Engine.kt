@@ -233,10 +233,20 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     /** Apply if `old` still sits right after `anchorLeft` in the current text and the tail after it is short. */
     private fun applyIfIntact(old: String, to: String, anchorLeft: String, kind: String): Boolean {
         val before = io.textBeforeCursor(600)
-        val key = anchorLeft.takeLast(60) + old
-        val idx = before.lastIndexOf(key)
-        if (idx < 0) return false
-        val start = idx + anchorLeft.takeLast(60).length
+        // Locate this occurrence of `old` by the text before it. Another correction may have changed that text in
+        // the meantime (two fixes a second apart), so shorter anchors are tried too, always on whole-word boundaries.
+        var start = -1
+        for (n in intArrayOf(60, 24, 10, 3)) {
+            val a = anchorLeft.takeLast(n)
+            val idx = before.lastIndexOf(a + old)
+            if (idx < 0) continue
+            val s = idx + a.length
+            val e = s + old.length
+            val wordBefore = s > 0 && TextUtil.isWordChar(before[s - 1])
+            val wordAfter = e < before.length && TextUtil.isWordChar(before[e])
+            if (!wordBefore && !wordAfter) { start = s; break }
+        }
+        if (start < 0) return false
         val tail = before.substring(start + old.length)
         if (tail.length > 500) return false
         return apply(old, to, tail, kind, before.substring(0, start))

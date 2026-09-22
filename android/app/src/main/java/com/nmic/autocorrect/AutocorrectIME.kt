@@ -114,11 +114,13 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
     override fun textAfterCursor(n: Int) = ic()?.getTextAfterCursor(n, 0)?.toString() ?: ""
     override fun replaceBeforeCursor(startBack: Int, len: Int, to: String): Boolean {
         val c = ic() ?: return false
-        val before = c.getTextBeforeCursor(startBack, 0)?.toString() ?: return false
-        if (before.length < startBack) return false
+        val wide = c.getTextBeforeCursor(startBack + 8, 0)?.toString() ?: return false
+        if (wide.length < startBack) return false
+        val pre = wide.dropLast(startBack) // untouched text just before the edit, so a deletion can be verified too
+        val before = wide.takeLast(startBack)
         val old = before.substring(0, len)
         val tail = before.substring(len)
-        val expected = to + tail
+        val expected = pre + to + tail
         // Preferred: select exactly the old range and commit the replacement over it, then put the cursor back where
         // it was (shifted by the length difference). Nothing after the word is retyped.
         val et = try { c.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0) } catch (e: Exception) { null }
@@ -142,17 +144,17 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         if (after.endsWith(expected)) return true
         val repair: String
         when {
-            method != "select" || after.endsWith(old + tail) -> { // nothing changed: delete up to the cursor and recommit
+            method != "select" || after.endsWith(pre + old + tail) -> { // nothing changed: delete up to the cursor and recommit
                 repair = "delete+commit"
-                c.beginBatchEdit(); c.deleteSurroundingText(startBack, 0); c.commitText(expected, 1); c.endBatchEdit()
+                c.beginBatchEdit(); c.deleteSurroundingText(startBack, 0); c.commitText(to + tail, 1); c.endBatchEdit()
             }
-            after.endsWith(old + to + tail) || after.endsWith(to + old + tail) -> { // inserted without deleting
+            after.endsWith(pre + old + to + tail) || after.endsWith(pre + to + old + tail) -> { // inserted without deleting
                 repair = "dedupe"
-                c.beginBatchEdit(); c.deleteSurroundingText(old.length + expected.length, 0); c.commitText(expected, 1); c.endBatchEdit()
+                c.beginBatchEdit(); c.deleteSurroundingText(old.length + to.length + tail.length, 0); c.commitText(to + tail, 1); c.endBatchEdit()
             }
-            after.endsWith(tail) -> { // deleted without inserting
+            after.endsWith(pre + tail) -> { // deleted without inserting
                 repair = "reinsert"
-                c.beginBatchEdit(); c.deleteSurroundingText(tail.length, 0); c.commitText(expected, 1); c.endBatchEdit()
+                c.beginBatchEdit(); c.deleteSurroundingText(tail.length, 0); c.commitText(to + tail, 1); c.endBatchEdit()
             }
             else -> { engine.diag("replace mismatch: expected …${expected.takeLast(20)} got …${after.takeLast(24)}"); return false }
         }
