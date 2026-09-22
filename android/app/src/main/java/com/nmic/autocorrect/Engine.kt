@@ -27,6 +27,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     val changes = ArrayList<Change>()
     private val never = HashSet<String>()
     private val unresolved = LinkedHashMap<String, Unresolved>()
+    private var unresolvedSeq = 0 // ids must survive the server's sanitiser ([A-Za-z0-9_:.-]), so they are plain counters
     private data class Unresolved(val word: String, val leftAnchor: String, var tries: Int = 0)
     private var lang: String? = null
     private var langProbe = 0
@@ -37,7 +38,19 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     private val logQueue = ArrayList<JSONObject>()
     private var logScheduled = false
 
-    fun currentLang(text: String): String = if (prefs.lang == "auto") lang ?: TextUtil.detectLang(text) else prefs.lang
+    /**
+     * Auto mode: the current paragraph decides when it clearly leans one way (the writer switched language mid-text);
+     * otherwise the server's last probe; otherwise a local guess over the whole text.
+     */
+    fun currentLang(text: String): String {
+        if (prefs.lang != "auto") return prefs.lang
+        val para = text.substring(text.lastIndexOf('\n') + 1)
+        val local = TextUtil.detectLangScore(para.takeLast(300))
+        if (local.words >= 4 && kotlin.math.abs(local.da - local.en) >= 2) return if (local.da > local.en) "da" else "en"
+        return lang ?: TextUtil.detectLang(text)
+    }
+    private val keepVerdicts = HashMap<String, Int>() // word -> confident "keep" verdicts from re-checks
+    private var pendingForeign: Pair<String, String>? = null // (word, anchorLeft) waiting for the next word before translating
 
     fun refreshLibrary() = api.pool.execute { api.get("/api/library")?.let { library = it } }
 
@@ -88,6 +101,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
             val own = changes.lastOrNull { !it.reverted && it.kind == "typo" && it.to == sp.word }
             if (own != null) alts = listOf(own.old) + (alts ?: emptyList())
             if (alts.isNullOrEmpty() || never.contains(sp.word.lowercase())) continue
+            if (own == null && (keepVerdicts[sp.word.lowercase()] ?: 0) >= 2) continue
             val id = "r$i"
             rcMeta[id] = sp
             recheck.put(JSONObject().put("id", id).put("word", sp.word).put("alternatives", JSONArray(alts.take(3))).put("left", before.substring(maxOf(0, sp.start - 300), sp.start)).put("right", before.substring(sp.end)))
@@ -112,15 +126,25 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
                 val ts = res.optJSONArray("typos") ?: JSONArray()
                 for (i in 0 until ts.length()) {
                     val d = ts.getJSONObject(i)
-                    if (d.optBoolean("foreign")) { translate(w.word, anchorLeft, lang); continue }
+                    if (d.optBoolean("foreign")) {
+                        val prev = pendingForeign
+                        if (prev != null && before.contains(prev.second.takeLast(40) + prev.first)) {
+                            // Two foreign words in a row: the writer switched language. Follow them instead of translating.
+                            pendingForeign = null
+                            if (prefs.lang == "auto") { this.lang = if (lang == "da") "en" else "da"; langProbe = 0 }
+                        } else pendingForeign = w.word to anchorLeft
+                        continue
+                    }
+                    pendingForeign?.let { (pw, pl) -> pendingForeign = null; if (!TextUtil.shouldSkip(pw)) translate(pw, pl, lang) }
                     if (d.optBoolean("replace") && d.has("to")) applyIfIntact(w.word, d.getString("to"), anchorLeft, "typo")
-                    else if (d.optBoolean("unresolved")) unresolved.putIfAbsent(w.word + "@" + anchorLeft.takeLast(40), Unresolved(w.word, anchorLeft.takeLast(40)))
+                    else if (d.optBoolean("unresolved")) unresolved.putIfAbsent("u" + (unresolvedSeq++), Unresolved(w.word, anchorLeft.takeLast(40)))
                 }
                 val rs = res.optJSONArray("recheck") ?: JSONArray()
                 for (i in 0 until rs.length()) {
                     val d = rs.getJSONObject(i)
                     val sp = rcMeta[d.optString("id")] ?: continue
                     if (d.optBoolean("replace") && d.has("to")) applyIfIntact(sp.word, d.getString("to"), before.substring(0, sp.start), "recheck")
+                    else if (d.optDouble("confidence", 0.0) >= 0.9) keepVerdicts[sp.word.lowercase()] = (keepVerdicts[sp.word.lowercase()] ?: 0) + 1
                 }
                 val pf = res.optJSONObject("prefilter")
                 if (wantContext) {
@@ -141,7 +165,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
                 val approved = res?.optJSONArray("approved") ?: JSONArray()
                 if (approved.length() == 0) return@post
                 val before = io.textBeforeCursor(600)
-                val windowStart = before.lastIndexOf(window.takeLast(80)).let { if (it < 0) -1 else it + 80 - window.length }
+                val anchor = window.takeLast(80)
+                val windowStart = before.lastIndexOf(anchor).let { if (it < 0) -1 else it + anchor.length - window.length }
                 if (windowStart < 0) return@post
                 // Apply from the end so earlier offsets stay valid.
                 val items = (0 until approved.length()).map { approved.getJSONObject(it) }.sortedByDescending { it.optInt("offset") }
@@ -217,7 +242,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         return apply(old, to, tail, kind, before.substring(0, start))
     }
 
-    private fun apply(old: String, to: String, tail: String, kind: String, left: String): Boolean {
+    private fun apply(old: String, to0: String, tail: String, kind: String, left: String): Boolean {
+        val to = if (kind != "grammar" && currentLang(left) == "en") to0.replace(Regex("(^|\\s)i(?=\\s|$)"), "$1I") else to0
         if (to == old || never.contains(old.lowercase()) && kind != "grammar") return false
         val ok = io.replaceBeforeCursor(old.length + tail.length, old.length, to)
         if (!ok) return false

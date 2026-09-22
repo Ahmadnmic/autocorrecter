@@ -50,6 +50,16 @@ object TextUtil {
         return replacement
     }
 
+    data class LangScore(val da: Int, val en: Int, val words: Int)
+    fun detectLangScore(text: String): LangScore {
+        val da = daMarkers; val en = enMarkers
+        var nd = 0; var ne = 0; var n = 0
+        for (w in text.lowercase().split(Regex("[^\\p{L}]+"))) { if (w.isEmpty()) continue; n++; if (w in da) nd++; if (w in en) ne++ }
+        if (Regex("[æøå]", RegexOption.IGNORE_CASE).containsMatchIn(text)) nd += 2
+        return LangScore(nd, ne, n)
+    }
+    private val daMarkers = setOf("og", "at", "det", "er", "jeg", "ikke", "til", "af", "en", "på", "med", "som", "den", "for", "har", "kan", "vi", "du", "de", "skal", "være", "også", "eller", "men", "hvad", "når", "over", "her", "fra", "meget", "gerne", "ville", "hej", "dig", "mig", "os", "jer", "noget", "lige", "bare", "godt", "tak")
+    private val enMarkers = setOf("the", "and", "is", "are", "to", "of", "in", "it", "that", "was", "for", "on", "with", "as", "this", "have", "be", "not", "you", "we", "they", "but", "or", "what", "when", "from", "very", "there", "will", "i", "my", "your", "can", "do", "want", "like", "just", "good", "thanks")
     fun detectLang(text: String): String {
         val da = setOf("og", "at", "det", "er", "jeg", "ikke", "til", "af", "en", "på", "med", "som", "den", "for", "har", "kan", "vi", "du", "de", "skal", "være", "også", "eller", "men", "hvad", "når", "over", "her", "fra", "meget")
         val en = setOf("the", "and", "is", "are", "to", "of", "in", "it", "that", "was", "for", "on", "with", "as", "this", "have", "be", "not", "you", "we", "they", "but", "or", "what", "when", "from", "very", "there", "will")
