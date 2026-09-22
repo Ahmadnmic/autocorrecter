@@ -41,6 +41,7 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         strip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(4)) }
         val scroll = HorizontalScrollView(this).apply { addView(strip); layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)); isHorizontalScrollBarEnabled = false }
         keyboard = KeyboardView(this, this)
+        keyboard.setLanguageLabel(langLabel())
         root.addView(scroll)
         root.addView(keyboard)
         // Edge-to-edge (Android 15+): the IME window no longer stops above the navigation bar, so the bottom row
@@ -113,31 +114,59 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
     override fun textAfterCursor(n: Int) = ic()?.getTextAfterCursor(n, 0)?.toString() ?: ""
     override fun replaceBeforeCursor(startBack: Int, len: Int, to: String): Boolean {
         val c = ic() ?: return false
+        val before = c.getTextBeforeCursor(startBack, 0)?.toString() ?: return false
+        if (before.length < startBack) return false
+        val old = before.substring(0, len)
+        val tail = before.substring(len)
+        val expected = to + tail
         // Preferred: select exactly the old range and commit the replacement over it, then put the cursor back where
         // it was (shifted by the length difference). Nothing after the word is retyped.
         val et = try { c.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0) } catch (e: Exception) { null }
+        var method = "none"
         if (et != null && et.selectionStart >= 0 && et.selectionStart == et.selectionEnd) {
             val caret = et.startOffset + et.selectionStart
             val s = caret - startBack
             if (s >= 0) {
+                method = "select"
                 c.beginBatchEdit()
-                val ok = c.setSelection(s, s + len) && c.commitText(to, 1)
+                c.setSelection(s, s + len)
+                c.commitText(to, 1)
                 val newCaret = caret + to.length - len
                 c.setSelection(newCaret, newCaret)
                 c.endBatchEdit()
-                if (ok) return true
             }
         }
-        // Fallback for editors without extracted text: delete up to the cursor and recommit the changed tail.
-        val before = c.getTextBeforeCursor(startBack, 0)?.toString() ?: return false
-        if (before.length < startBack) return false
-        val tail = before.substring(len)
-        c.beginBatchEdit()
-        c.deleteSurroundingText(startBack, 0)
-        c.commitText(to + tail, 1)
-        c.endBatchEdit()
-        return true
+        // Verify by reading the text back. Editors differ in how they honour selection edits (some ignore the
+        // selection, some apply it late); whatever happened, end with exactly the expected text before the cursor.
+        var after = c.getTextBeforeCursor(expected.length + old.length + 4, 0)?.toString() ?: return method == "select"
+        if (after.endsWith(expected)) return true
+        val repair: String
+        when {
+            method != "select" || after.endsWith(old + tail) -> { // nothing changed: delete up to the cursor and recommit
+                repair = "delete+commit"
+                c.beginBatchEdit(); c.deleteSurroundingText(startBack, 0); c.commitText(expected, 1); c.endBatchEdit()
+            }
+            after.endsWith(old + to + tail) || after.endsWith(to + old + tail) -> { // inserted without deleting
+                repair = "dedupe"
+                c.beginBatchEdit(); c.deleteSurroundingText(old.length + expected.length, 0); c.commitText(expected, 1); c.endBatchEdit()
+            }
+            after.endsWith(tail) -> { // deleted without inserting
+                repair = "reinsert"
+                c.beginBatchEdit(); c.deleteSurroundingText(tail.length, 0); c.commitText(expected, 1); c.endBatchEdit()
+            }
+            else -> { engine.diag("replace mismatch: expected …${expected.takeLast(20)} got …${after.takeLast(24)}"); return false }
+        }
+        after = c.getTextBeforeCursor(expected.length + 2, 0)?.toString() ?: ""
+        engine.diag("replace repaired ($repair) ok=${after.endsWith(expected)} for \"$old\" -> \"$to\"")
+        return after.endsWith(expected)
     }
+    override fun onLongSpace() {
+        // Hold the space bar to switch the correction language: Auto -> English -> Dansk -> Auto.
+        prefs.lang = when (prefs.lang) { "auto" -> "en"; "en" -> "da"; else -> "auto" }
+        keyboard.setLanguageLabel(langLabel())
+        android.widget.Toast.makeText(this, "Language: " + when (prefs.lang) { "en" -> "English"; "da" -> "Dansk"; else -> "Auto" }, android.widget.Toast.LENGTH_SHORT).show()
+    }
+    private fun langLabel() = when (prefs.lang) { "en" -> "English"; "da" -> "Dansk"; else -> "Auto" }
     override fun onChange(change: Engine.Change) = renderStrip()
 
     private fun renderStrip() {
@@ -159,7 +188,7 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         setPadding(dp(10), dp(5), dp(10), dp(5))
         background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Color.parseColor(colour)) }
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT); lp.marginEnd = dp(6); layoutParams = lp
-        if (change != null) setOnClickListener { if (engine.revert(change)) renderStrip() }
+        if (change != null) setOnClickListener { if (engine.revert(change)) renderStrip() else { engine.diag("revert failed for \"${change.to}\""); android.widget.Toast.makeText(this@AutocorrectIME, "Can't undo: the text has changed", android.widget.Toast.LENGTH_SHORT).show() } }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

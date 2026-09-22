@@ -130,6 +130,7 @@ export default function Page() {
     } catch {}
     nudgeShownRef.current = true;
     setNudge(true);
+    setTimeout(() => setNudge(false), 10_000);
   };
   const dismissNudge = () => {
     setNudge(false);
@@ -976,15 +977,16 @@ export default function Page() {
 function DownloadMenu({ release, onClose, inline }: { release: Release | null; onClose?: () => void; inline?: boolean }) {
   const a = release?.assets ?? {};
   const items = [
-    { key: "darwin-arm64", label: "macOS · Apple silicon (M1–M4)", hint: "zip" },
-    { key: "darwin-x64", label: "macOS · Intel", hint: "zip" },
-    { key: "win32-x64", label: "Windows · 64-bit", hint: "zip, portable" },
+    { key: "darwin-arm64", label: "macOS · Apple silicon (M1–M4)", hint: "zip", paused: true },
+    { key: "darwin-x64", label: "macOS · Intel", hint: "zip", paused: true },
+    { key: "win32-x64", label: "Windows · 64-bit", hint: "zip, portable", paused: true },
     { key: "android", label: "Android · keyboard (GrapheneOS)", hint: "apk" },
   ];
   return (
     <div className={`dlmenu ${inline ? "inline" : ""}`} role="menu" onMouseLeave={onClose}>
       {items.map((it) => {
-        const url = a[it.key];
+        // Desktop downloads are paused while the in-app typing is being fixed; installed apps keep updating.
+        const url = it.paused ? undefined : a[it.key];
         return url ? (
           <a key={it.key} href={url} role="menuitem" onClick={onClose}>
             <span>{it.label}</span>
@@ -993,7 +995,7 @@ function DownloadMenu({ release, onClose, inline }: { release: Release | null; o
         ) : (
           <span key={it.key} className="soon" role="menuitem" aria-disabled>
             <span>{it.label}</span>
-            <small>coming soon</small>
+            <small>{it.paused ? "paused, back soon" : "coming soon"}</small>
           </span>
         );
       })}

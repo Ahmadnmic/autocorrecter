@@ -26,7 +26,12 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
         fun onText(s: String)
         fun onBackspace()
         fun onEnter()
+        fun onLongSpace()
     }
+    private var langLabel = "Auto"
+    fun setLanguageLabel(l: String) { langLabel = l; invalidate() }
+    private var longSpace: Runnable? = null
+    private var spaceConsumed = false
     private data class Key(val label: String, val code: String, val weight: Float = 1f)
     private val letters = listOf(
         listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "å").map { Key(it, it) },
@@ -128,7 +133,7 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
                 c.drawRoundRect(r, radius, radius, fill)
                 val label = labelFor(k)
                 val tp = if (enterAccent) paintTextWhite else paintText
-                if (k.code == " ") c.drawText("Inline Autocorrect", r.centerX(), r.centerY() + paintHint.textSize / 3, paintHint)
+                if (k.code == " ") c.drawText("Inline Autocorrect · $langLabel", r.centerX(), r.centerY() + paintHint.textSize / 3, paintHint)
                 else c.drawText(label, r.centerX(), r.centerY() + tp.textSize / 3, tp)
                 // Number hints on the top letter row, like the stock keyboard.
                 if (!sym && ri == 0 && k.code.length == 1) {
@@ -190,8 +195,12 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val hit = keyAt(e.x, e.y) ?: return true
-                pressed = hit.second; pressedRect = hit.first; pressedIsRepeating = false
+                pressed = hit.second; pressedRect = hit.first; pressedIsRepeating = false; spaceConsumed = false
                 haptic()
+                if (hit.second.code == " ") {
+                    longSpace = Runnable { spaceConsumed = true; haptic(); listener.onLongSpace() }
+                    handler.postDelayed(longSpace!!, 450)
+                }
                 if (hit.second.code == "BS") {
                     listener.onBackspace()
                     pressedIsRepeating = true
@@ -203,17 +212,19 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
             MotionEvent.ACTION_MOVE -> {
                 // Sliding onto another key moves the highlight and the preview, so a slip can be corrected before release.
                 val hit = keyAt(e.x, e.y)
-                if (!pressedIsRepeating && hit != null && hit.second !== pressed) { pressed = hit.second; pressedRect = hit.first; invalidate() }
+                if (!pressedIsRepeating && hit != null && hit.second !== pressed) { pressed = hit.second; pressedRect = hit.first; longSpace?.let { handler.removeCallbacks(it) }; longSpace = null; invalidate() }
             }
             MotionEvent.ACTION_UP -> {
                 repeat?.let { handler.removeCallbacks(it) }; repeat = null
+                longSpace?.let { handler.removeCallbacks(it) }; longSpace = null
                 val k = pressed
-                if (k != null && k.code != "BS") press(k)
+                if (k != null && k.code != "BS" && !spaceConsumed) press(k)
                 pressed = null; pressedRect = null
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
                 repeat?.let { handler.removeCallbacks(it) }; repeat = null
+                longSpace?.let { handler.removeCallbacks(it) }; longSpace = null
                 pressed = null; pressedRect = null
                 invalidate()
             }

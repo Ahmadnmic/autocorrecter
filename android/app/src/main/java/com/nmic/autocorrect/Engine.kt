@@ -21,7 +21,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         fun replaceBeforeCursor(startBack: Int, len: Int, to: String): Boolean
         fun onChange(change: Change)
     }
-    data class Change(val id: String, val old: String, val to: String, val kind: String, var reverted: Boolean = false, val at: Long = System.currentTimeMillis())
+    data class Change(val id: String, val old: String, val to: String, val kind: String, var reverted: Boolean = false, val at: Long = System.currentTimeMillis(), val anchor: String = "")
 
     private val main = Handler(Looper.getMainLooper())
     val changes = ArrayList<Change>()
@@ -248,7 +248,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val ok = io.replaceBeforeCursor(old.length + tail.length, old.length, to)
         if (!ok) return false
         if (kind == "grammar" && old.isBlank() && to.isBlank()) return true // spacing only: not worth a chip
-        val c = Change("${System.currentTimeMillis()}-${changes.size}", old, to, kind)
+        val c = Change("${System.currentTimeMillis()}-${changes.size}", old, to, kind, anchor = left.takeLast(40))
         changes.add(0, c)
         if (changes.size > 100) changes.removeAt(changes.size - 1)
         io.onChange(c)
@@ -259,7 +259,10 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     fun revert(c: Change): Boolean {
         if (c.reverted) return false
         val before = io.textBeforeCursor(600)
-        val idx = before.lastIndexOf(c.to)
+        // Find this particular change (the text before it, then the word), not just the last occurrence of the word.
+        var idx = -1
+        for (n in intArrayOf(40, 20, 8)) { val a = c.anchor.takeLast(n); val i = before.lastIndexOf(a + c.to); if (i >= 0) { idx = i + a.length; break } }
+        if (idx < 0) idx = before.lastIndexOf(c.to)
         if (idx < 0) return false
         val tail = before.substring(idx + c.to.length)
         if (tail.length > 500) return false
@@ -269,6 +272,9 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         log(JSONObject().put("kind", "reverted").put("old", c.old).put("to", c.to).put("changeKind", c.kind).put("lang", currentLang(before)))
         return true
     }
+
+    /** Diagnostic note sent with the event log, so client-side failures show up in the server logs. */
+    fun diag(note: String) = log(JSONObject().put("kind", "cancelled").put("old", note.take(80)).put("to", "").put("changeKind", "diag").put("lang", prefs.lang.take(2)))
 
     private fun scrub(t: String) = t.replace(Regex("[\\w.+-]+@[\\w-]+\\.[\\w.-]+"), "<email>").replace(Regex("\\S*\\d\\S*\\d\\S*"), "<num>").replace(Regex("\\S{20,}"), "<long>")
 

@@ -3,6 +3,8 @@
 // Built by /api/learn from the event log; consulted by /api/jev before any model call and fetched by clients.
 import { list, put } from "@vercel/blob";
 
+import { ABBREVIATIONS } from "./abbreviations";
+
 export type LibraryEntry = { to: string; n: number; lang: string; note?: string };
 export type Library = { version: number; count: number; updatedAt: string; entries: Record<string, LibraryEntry>; never: string[] };
 
@@ -31,9 +33,14 @@ export async function saveLibrary(lib: Library): Promise<void> {
   cache = { at: Date.now(), lib };
 }
 
-/** Instant lookup: a learned correction for this typed word, unless the word was learned as "leave alone". */
+/** Instant lookup: a learned correction (or a built-in abbreviation) for this typed word, unless learned as "leave alone". */
 export function lookup(lib: Library, typed: string): LibraryEntry | null {
   const k = typed.toLowerCase();
   if (lib.never.includes(k)) return null;
-  return lib.entries[k] ?? null;
+  return lib.entries[k] ?? ABBREVIATIONS[k] ?? null;
+}
+
+/** The library as clients see it: built-in abbreviations underneath the learned entries. */
+export function withAbbreviations(lib: Library): Library {
+  return { ...lib, entries: { ...ABBREVIATIONS, ...lib.entries } };
 }

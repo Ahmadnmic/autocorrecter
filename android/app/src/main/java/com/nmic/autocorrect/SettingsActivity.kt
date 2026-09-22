@@ -1,134 +1,221 @@
 package com.nmic.autocorrect
 
 import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
 import android.view.inputmethod.InputMethodManager
-import android.widget.*
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.slider.Slider
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
+import java.io.File
 
+/** The app's one screen: status, update, setup, settings and a place to try the keyboard. Material 3, built in code. */
 class SettingsActivity : AppCompatActivity() {
     private val releasesApi = "https://api.github.com/repos/Ahmadnmic/autocorrecter/releases/latest"
+    private val main = Handler(Looper.getMainLooper())
+    private var downloadId = -1L
+    private var downloadReceiver: BroadcastReceiver? = null
+    private var progressPoll: Runnable? = null
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
         val api = Api(prefs)
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        fun label(t: String) = TextView(this).apply { text = t; textSize = 13f; setPadding(0, pad / 2, 0, 4) }
-        fun heading(t: String) = TextView(this).apply { text = t; textSize = 12f; isAllCaps = true; alpha = 0.6f; setPadding(0, pad, 0, 2) }
         val version = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (e: Exception) { "?" }
-        root.addView(TextView(this).apply { text = "Inline Autocorrect"; textSize = 22f })
-        root.addView(label("Version $version"))
 
-        // ---- Update
-        root.addView(heading("Update"))
-        val updateStatus = TextView(this).apply { textSize = 13f; text = "Checks the latest release on GitHub." }
-        val updateBtn = Button(this).apply { text = "Check for updates" }
-        val installBtn = Button(this).apply { text = "Download and install"; visibility = android.view.View.GONE }
-        var latestUrl: String? = null
-        updateBtn.setOnClickListener {
-            updateBtn.isEnabled = false
-            updateStatus.text = "Checking…"
-            Thread {
-                val rel = api.getUrl(releasesApi)
-                val tag = rel?.optString("tag_name") ?: ""
-                val latest = tag.removePrefix("android-v")
-                val asset = rel?.optJSONArray("assets")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") } }
-                val url = asset?.optString("browser_download_url")
-                runOnUiThread {
-                    updateBtn.isEnabled = true
-                    when {
-                        rel == null -> updateStatus.text = "Could not reach GitHub. Check the Network permission for this app."
-                        url == null || latest.isEmpty() -> updateStatus.text = "No release found."
-                        newer(latest, version) -> { updateStatus.text = "Version $latest is available (you have $version)."; latestUrl = url; installBtn.visibility = android.view.View.VISIBLE }
-                        else -> { updateStatus.text = "You are on the latest version ($version)."; installBtn.visibility = android.view.View.GONE }
-                    }
-                }
-            }.start()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(24), dp(16), dp(32)) }
+        fun title(t: String) = TextView(this).apply { text = t; textSize = 28f; setTextColor(color(com.google.android.material.R.attr.colorOnSurface)); setPadding(dp(4), 0, 0, dp(2)) }
+        fun body(t: String, dim: Boolean = true) = TextView(this).apply { text = t; textSize = 14f; setTextColor(color(if (dim) com.google.android.material.R.attr.colorOnSurfaceVariant else com.google.android.material.R.attr.colorOnSurface)); setLineSpacing(0f, 1.15f) }
+        fun heading(t: String) = TextView(this).apply { text = t; textSize = 16f; setTypeface(typeface, android.graphics.Typeface.BOLD); setTextColor(color(com.google.android.material.R.attr.colorOnSurface)); setPadding(0, 0, 0, dp(6)) }
+        fun card(vararg views: View): MaterialCardView = MaterialCardView(this).apply {
+            radius = dp(20).toFloat(); strokeWidth = 0; cardElevation = 0f
+            setCardBackgroundColor(color(com.google.android.material.R.attr.colorSurfaceContainer))
+            val inner = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(16), dp(18), dp(16)) }
+            views.forEach { v -> inner.addView(v, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = if (inner.childCount == 0) 0 else dp(8) }) }
+            addView(inner)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
         }
-        installBtn.setOnClickListener {
-            val url = latestUrl ?: return@setOnClickListener
-            try {
-                // The system downloader fetches the APK and shows a notification; tapping it opens the installer.
-                // Android verifies the signature against the installed app, so only our own builds can replace it.
-                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                val req = DownloadManager.Request(Uri.parse(url)).setTitle("Inline Autocorrect update").setMimeType("application/vnd.android.package-archive")
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "inline-autocorrect.apk")
-                dm.enqueue(req)
-                updateStatus.text = "Downloading… tap the notification when it finishes to install."
-            } catch (e: Exception) {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            }
-        }
-        root.addView(updateStatus); root.addView(updateBtn); root.addView(installBtn)
+        fun button(t: String, tonal: Boolean = false, onClick: () -> Unit) = MaterialButton(this, null, if (tonal) com.google.android.material.R.attr.materialButtonTonalStyle else com.google.android.material.R.attr.materialButtonStyle).apply { text = t; cornerRadius = dp(20); setOnClickListener { onClick() } }
+        fun row(vararg views: View) = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; views.forEach { v -> addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) }) } }
 
-        // ---- Setup
-        root.addView(heading("Setup"))
-        root.addView(label("Recommended: the spell checker. It works with your normal keyboard. Settings → System → Languages → Spell checker (on some builds: Keyboard → Spell checker) → choose Inline Autocorrect. Typos are underlined red, wrong words in context blue; tap a word to accept the suggestion."))
-        root.addView(Button(this).apply { text = "Open spell checker settings"; setOnClickListener {
-            try { startActivity(Intent("android.settings.SPELL_CHECKER_SETTINGS")) } catch (e: Exception) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-        } })
-        val status = TextView(this).apply { textSize = 13f; setPadding(0, pad / 2, 0, 4) }
-        root.addView(label("Optional: the keyboard, which corrects automatically while you type (like the desktop app). Android never hides the stock keyboard; you switch the current one: 1. Enable, 2. Choose, or tap the small keyboard icon at the bottom-right of the screen while typing."))
-        root.addView(status)
+        root.addView(title("Inline Autocorrect"))
+        root.addView(body("Version $version").apply { setPadding(dp(4), 0, 0, dp(16)) })
+
+        // ---- Status + keyboard switch
+        val status = body("", dim = false)
+        val enableBtn = button("Enable keyboard", tonal = true) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+        val chooseBtn = button("Choose keyboard") { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() }
         fun refreshStatus() {
             val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
             val enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
             val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
             val isCurrent = current.startsWith("$packageName/")
-            status.text = when { isCurrent -> "✓ Inline Autocorrect is the current keyboard."; enabled -> "Enabled, but not selected. Tap “Choose keyboard” and pick Inline Autocorrect."; else -> "Not enabled yet. Tap “Enable keyboard” and switch it on." }
+            status.text = when { isCurrent -> "✓ Inline Autocorrect is your keyboard. Corrections happen while you type."; enabled -> "Enabled, but another keyboard is selected."; else -> "Not enabled yet. Turn it on in the system keyboard list, then choose it." }
+            enableBtn.visibility = if (enabled) View.GONE else View.VISIBLE
+            chooseBtn.visibility = if (isCurrent) View.GONE else View.VISIBLE
         }
         refreshStatus()
         window.decorView.viewTreeObserver.addOnWindowFocusChangeListener { if (it) refreshStatus() }
-        root.addView(Button(this).apply { text = "Enable keyboard"; setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } })
-        root.addView(Button(this).apply { text = "Choose keyboard"; setOnClickListener { (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() } })
+        val onSwitch = MaterialSwitch(this).apply { text = "Autocorrect on"; textSize = 16f; isChecked = prefs.enabled; setOnCheckedChangeListener { _, v -> prefs.enabled = v } }
+        root.addView(card(heading("Keyboard"), status, row(enableBtn, chooseBtn), onSwitch))
+
+        // ---- Update
+        val updateStatus = body("Updates are published on GitHub. Checking is manual, nothing runs in the background.")
+        val progress = LinearProgressIndicator(this).apply { visibility = View.GONE; isIndeterminate = false; max = 100; trackCornerRadius = dp(4) }
+        var latestUrl: String? = null
+        var latestVersion = ""
+        val updateBtn = button("Check for updates", tonal = true) {}
+        val apkFile = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "inline-autocorrect.apk")
+        fun install() {
+            try {
+                val uri = FileProvider.getUriForFile(this, "$packageName.files", apkFile)
+                startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) { updateStatus.text = "Could not open the installer: ${e.message}" }
+        }
+        fun showInstall() {
+            progress.visibility = View.GONE
+            updateStatus.text = "Version $latestVersion downloaded. Android will ask you to confirm the install; your settings are kept."
+            updateBtn.text = "Install $latestVersion"
+            updateBtn.setOnClickListener { install() }
+        }
+        fun pollProgress() {
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val c = dm.query(DownloadManager.Query().setFilterById(downloadId)) ?: return
+            c.use {
+                if (!it.moveToFirst()) return
+                val done = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                val st = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                when (st) {
+                    DownloadManager.STATUS_SUCCESSFUL -> { showInstall(); return }
+                    DownloadManager.STATUS_FAILED -> { progress.visibility = View.GONE; updateStatus.text = "Download failed. Check the network permission and try again."; updateBtn.text = "Retry download"; updateBtn.isEnabled = true; return }
+                    else -> {
+                        if (total > 0) { progress.isIndeterminate = false; progress.setProgressCompat((done * 100 / total).toInt(), true); updateStatus.text = "Downloading $latestVersion… ${done / 1024} / ${total / 1024} KB" }
+                        else { progress.isIndeterminate = true; updateStatus.text = "Downloading $latestVersion…" }
+                    }
+                }
+            }
+            progressPoll = Runnable { pollProgress() }.also { main.postDelayed(it, 400) }
+        }
+        fun download() {
+            val url = latestUrl ?: return
+            try {
+                if (apkFile.exists()) apkFile.delete()
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                val req = DownloadManager.Request(Uri.parse(url)).setTitle("Inline Autocorrect $latestVersion").setMimeType("application/vnd.android.package-archive")
+                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+                    .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "inline-autocorrect.apk")
+                downloadId = dm.enqueue(req)
+                updateBtn.text = "Downloading…"; updateBtn.isEnabled = false
+                progress.visibility = View.VISIBLE; progress.isIndeterminate = true
+                val recv = object : BroadcastReceiver() {
+                    override fun onReceive(ctx: Context, intent: Intent) {
+                        if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
+                        progressPoll?.let { main.removeCallbacks(it) }
+                        updateBtn.isEnabled = true
+                        pollProgress()
+                    }
+                }
+                downloadReceiver?.let { unregisterReceiver(it) }
+                downloadReceiver = recv
+                ContextCompat.registerReceiver(this, recv, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
+                pollProgress()
+            } catch (e: Exception) {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        }
+        fun check() {
+            updateBtn.isEnabled = false
+            updateStatus.text = "Checking…"
+            Thread {
+                val rel = api.getUrl(releasesApi)
+                val latest = (rel?.optString("tag_name") ?: "").removePrefix("android-v")
+                val asset = rel?.optJSONArray("assets")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") } }
+                val url = asset?.optString("browser_download_url")
+                runOnUiThread {
+                    updateBtn.isEnabled = true
+                    when {
+                        rel == null -> updateStatus.text = "Could not reach GitHub. On GrapheneOS, check that this app has the Network permission."
+                        url == null || latest.isEmpty() -> updateStatus.text = "No release found."
+                        newer(latest, version) -> {
+                            latestUrl = url; latestVersion = latest
+                            updateStatus.text = "Version $latest is available (you have $version)."
+                            updateBtn.text = "Download $latest"
+                            updateBtn.setOnClickListener { download() }
+                        }
+                        else -> { updateStatus.text = "You are on the latest version ($version)."; updateBtn.text = "Check again" }
+                    }
+                }
+            }.start()
+        }
+        updateBtn.setOnClickListener { check() }
+        root.addView(card(heading("Update"), updateStatus, progress, updateBtn))
 
         // ---- Settings
-        root.addView(heading("Settings"))
-        root.addView(Switch(this).apply { text = "Autocorrect on"; isChecked = prefs.enabled; setOnCheckedChangeListener { _, v -> prefs.enabled = v } })
-        root.addView(label("Aggressiveness"))
-        val aggrValue = TextView(this)
-        root.addView(SeekBar(this).apply { max = 100; progress = (prefs.aggressiveness * 100).toInt(); setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) { prefs.aggressiveness = p / 100f; aggrValue.text = "$p" }
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {}
-        }) })
-        aggrValue.text = "${(prefs.aggressiveness * 100).toInt()}"
-        root.addView(aggrValue)
-        root.addView(label("Tone. As written: only errors are fixed. Any other tone also swaps single words that clash with it."))
+        val aggrLabel = body("Aggressiveness · ${(prefs.aggressiveness * 100).toInt()}", dim = false)
+        val slider = Slider(this).apply { valueFrom = 0f; valueTo = 100f; stepSize = 5f; value = (prefs.aggressiveness * 100).toInt().toFloat(); addOnChangeListener { _, v, _ -> prefs.aggressiveness = v / 100f; aggrLabel.text = "Aggressiveness · ${v.toInt()}" } }
+        val langLabel = body("Language", dim = false)
+        val langs = listOf("auto" to "Auto", "en" to "English", "da" to "Dansk")
+        val langGroup = MaterialButtonToggleGroup(this).apply { isSingleSelection = true; isSelectionRequired = true }
+        langs.forEachIndexed { i, (k, l) -> langGroup.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply { text = l; id = 1000 + i; layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }) }
+        langGroup.check(1000 + langs.indexOfFirst { it.first == prefs.lang }.coerceAtLeast(0))
+        langGroup.addOnButtonCheckedListener { _, id, checked -> if (checked) prefs.lang = langs[id - 1000].first }
+        val langHint = body("Auto follows the paragraph you are writing. Holding the space bar on the keyboard switches too.")
+        val toneLabel = body("Tone", dim = false)
         val tones = listOf("as-written" to "As written", "neutral" to "Neutral", "formal" to "Formal", "professional" to "Professional", "casual" to "Casual", "friendly" to "Friendly", "academic" to "Academic", "concise" to "Concise")
-        root.addView(Spinner(this).apply {
-            adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, tones.map { it.second })
-            setSelection(tones.indexOfFirst { it.first == prefs.tone }.coerceAtLeast(0))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { prefs.tone = tones[pos].first }
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-            }
-        })
-        root.addView(label("Language"))
-        val langs = listOf("auto" to "Auto (counts your words)", "en" to "English", "da" to "Dansk")
-        root.addView(Spinner(this).apply {
-            adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, langs.map { it.second })
-            setSelection(langs.indexOfFirst { it.first == prefs.lang }.coerceAtLeast(0))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { prefs.lang = langs[pos].first }
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-            }
-        })
-        root.addView(label("Server (HTTPS only)"))
-        root.addView(EditText(this).apply { setText(prefs.apiBase); setOnFocusChangeListener { _, f -> if (!f) prefs.apiBase = text.toString().trim() } })
-        root.addView(label("Text near the cursor is sent to the server for decisions. Passwords, numbers, e-mail, URL and incognito fields are never touched. On GrapheneOS, keep the Network permission for this app enabled."))
-        root.addView(label("Try it here:"))
-        root.addView(EditText(this).apply { hint = "Type: I definately recieved it ,and woyou please look"; minLines = 3 })
-        setContentView(ScrollView(this).apply { addView(root) })
+        val toneGroup = com.google.android.material.chip.ChipGroup(this).apply { isSingleSelection = true; isSelectionRequired = true }
+        tones.forEachIndexed { i, (k, l) -> toneGroup.addView(com.google.android.material.chip.Chip(this, null, com.google.android.material.R.attr.chipStyle).apply { text = l; id = 2000 + i; isCheckable = true; isChecked = prefs.tone == k; setEnsureMinTouchTargetSize(false) }) }
+        toneGroup.setOnCheckedStateChangeListener { _, ids -> ids.firstOrNull()?.let { prefs.tone = tones[it - 2000].first } }
+        val toneHint = body("As written only fixes errors. Any other tone also swaps single words that clash with it.")
+        root.addView(card(heading("Corrections"), aggrLabel, slider, langLabel, langGroup, langHint, toneLabel, toneGroup, toneHint))
+
+        // ---- Try it
+        val tryBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Type here: I definately recieved it ,and woyou please look"; boxCornerRadiusTopStart = dp(14).toFloat(); boxCornerRadiusTopEnd = dp(14).toFloat(); boxCornerRadiusBottomStart = dp(14).toFloat(); boxCornerRadiusBottomEnd = dp(14).toFloat() }
+        tryBox.addView(TextInputEditText(tryBox.context).apply { minLines = 3; gravity = Gravity.TOP })
+        root.addView(card(heading("Try it"), tryBox))
+
+        // ---- Spell checker + server
+        val spellBtn = button("Open spell checker settings", tonal = true) { try { startActivity(Intent("android.settings.SPELL_CHECKER_SETTINGS")) } catch (e: Exception) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } }
+        val serverBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Server (HTTPS)" }
+        serverBox.addView(TextInputEditText(serverBox.context).apply { setText(prefs.apiBase); setOnFocusChangeListener { _, f -> if (!f) prefs.apiBase = text.toString().trim() } })
+        root.addView(card(heading("More"), body("The spell checker works with any keyboard: typos are underlined and a tap accepts the suggestion. Settings → System → Languages → Spell checker."), spellBtn, serverBox, body("Text near the cursor is sent to the server for decisions. Passwords, numbers, e-mail, URL and incognito fields are never touched.")))
+
+        setContentView(ScrollView(this).apply { addView(root); isVerticalScrollBarEnabled = false; fitsSystemWindows = true })
+        if (apkFile.exists() && apkFile.length() > 1_000_000) { latestVersion = "downloaded update"; updateStatus.text = "An update was downloaded earlier. Install it, or check again for a newer one."; updateBtn.text = "Install downloaded update"; updateBtn.setOnClickListener { install() } }
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        progressPoll?.let { main.removeCallbacks(it) }
+        downloadReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) {} }
+    }
+
+    private fun color(attr: Int): Int = com.google.android.material.color.MaterialColors.getColor(this, attr, 0)
 
     private fun newer(a: String, b: String): Boolean {
         val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
