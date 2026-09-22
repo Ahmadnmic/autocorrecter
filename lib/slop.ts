@@ -14,6 +14,15 @@ export function isSlop(candidate: string): boolean {
   return false;
 }
 
+/**
+ * Punctuation the machine reaches for by default: em and en dashes, and the ellipsis character. The ruleset says to
+ * match the writer's own habits, so a replacement may only contain one when the text around it already does.
+ */
+const MACHINE_PUNCT = /[—–…]/;
+export function introducesMachinePunctuation(context: string, candidate: string): boolean {
+  return MACHINE_PUNCT.test(candidate) && !MACHINE_PUNCT.test(context);
+}
+
 /** Compact lists for prompts. */
 export const NEVER_SUGGEST_PROMPT = rules.never_suggest.filter((w) => !w.includes(" ")).slice(0, 160).join(", ");
 export const NEVER_SUGGEST_DA_PROMPT = rules.never_suggest_da.filter((w) => !w.includes(" ")).slice(0, 40).join(", ");

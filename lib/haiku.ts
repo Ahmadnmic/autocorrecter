@@ -28,7 +28,7 @@ Propose a replacement ONLY for a single word that is:
 - the wrong word for the intended meaning (a confusable such as their/there, then/than, lose/loose, og/at, nogen/nogle),
 - a clear collocation or preposition error a native speaker would notice.
 
-Do NOT propose: stylistic upgrades, synonyms of equal quality, tone changes, changes to names, brands, quotes, code, numbers, or anything in the last two words of the window. Do not merge words; a word that is several words run together ("canyouhelp", "iwanttodothis") may be split into the phrase the writer meant. Keep the writer's language and register.
+Do NOT propose: stylistic upgrades, synonyms of equal quality, tone changes, changes to names, brands, quotes, code, numbers, an em dash, en dash or ellipsis character the writer is not already using, or anything in the last two words of the window. Do not merge words; a word that is several words run together ("canyouhelp", "iwanttodothis") may be split into the phrase the writer meant. Keep the writer's language and register.
 
 Return at most 3 proposals. An empty list is the expected answer most of the time. Be terse: one alternative (a second only when two are equally likely) and a "reason" of at most 5 words; speed matters more than explanation. "occurrence" is the 1-based index of the word among identical words in the window, so the correct one can be located. "category" is "error" for a wrong word, grammar or spelling, and "tone" for a word that only clashes with the requested target tone.
 
@@ -87,7 +87,7 @@ const TONE_MODE = `TONE MODE: a target tone is set, so be assertive about regist
  * Minimal rewrite of one finished sentence that does not read as a coherent line (word order, missing or extra
  * words, agreement), keeping the writer's words and meaning. Returns null when the sentence is fine or unclear.
  */
-export async function rewriteSentence(sentence: string, lang: string, timeoutMs = 5000): Promise<{ to: string; reason: string } | null> {
+export async function rewriteSentence(sentence: string, lang: string, timeoutMs = 5000, tone = "as-written"): Promise<{ to: string; reason: string } | null> {
   if (!anthropicConfigured()) return null;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -98,8 +98,8 @@ export async function rewriteSentence(sentence: string, lang: string, timeoutMs 
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 300,
-        system: [{ type: "text", text: `You repair one sentence someone just typed on a phone, in English or Danish. Make the SMALLEST edit that turns it into a grammatical, coherent sentence: fix word order, a missing or doubled word, agreement, a word that is clearly the wrong one, or punctuation a reader needs inside the sentence (a comma between two clauses, a comma splice). Do not add a full stop or a capital at the ends: a text message is fine without them. Keep the writer's own words, meaning, register and language; never add information, never polish style, never change names or numbers. If the sentence is already fine, or you cannot tell what was meant, return it unchanged with confident=false. Answer with JSON only: {"rewrite":"...","confident":true,"reason":"<=6 words"}`, cache_control: { type: "ephemeral" } }],
-        messages: [{ role: "user", content: `Language: ${lang}\nSentence: ${sentence}` }],
+        system: [{ type: "text", text: `You repair one sentence someone just typed on a phone, in English or Danish. Make the SMALLEST edit that turns it into a grammatical, coherent sentence: fix word order, a missing or doubled word, agreement, a word that is clearly the wrong one, or punctuation a reader needs inside the sentence (a comma between two clauses, a comma splice). Use only punctuation the writer already uses: never introduce an em dash, an en dash or an ellipsis character; a comma or a full stop is what a person types. Do not add a full stop or a capital at the ends: a text message is fine without them. Keep the writer's own words, meaning, register and language; never add information, never polish style, never change names or numbers. If the sentence is already fine, or you cannot tell what was meant, return it unchanged with confident=false. Answer with JSON only: {"rewrite":"...","confident":true,"reason":"<=6 words"}`, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: `${tone !== "as-written" ? `The writer asked for a ${tone} tone, so you may also reorder the clauses and change the wording of this sentence to fit that tone, as long as every fact and the writer's intent stay exactly the same.\n` : ""}Language: ${lang}\nSentence: ${sentence}` }],
       }),
       signal: ctrl.signal,
       cache: "no-store",
@@ -115,7 +115,8 @@ export async function rewriteSentence(sentence: string, lang: string, timeoutMs 
     const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}'’]+/u).filter(Boolean);
     const a = words(sentence), b = words(to);
     const kept = a.filter((w) => b.includes(w)).length;
-    if (a.length < 4 || kept / a.length < 0.6 || b.length > a.length * 1.5 + 2 || b.length < a.length * 0.6) return null;
+    const keepRatio = tone === "as-written" ? 0.6 : 0.4; // a tone may legitimately reword more
+    if (a.length < 4 || kept / a.length < keepRatio || b.length > a.length * 1.6 + 2 || b.length < a.length * 0.5) return null;
     return { to, reason: String(parsed.reason ?? "").slice(0, 60) };
   } finally {
     clearTimeout(t);

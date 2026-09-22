@@ -94,14 +94,16 @@ export async function POST(req: Request) {
   const typoMeta: Record<string, { word: string; original: string; suggestions: string[] }> = {};
   for (const t of (body.typos ?? []).slice(0, 10)) {
     const word = t.word.trim();
-    if (!word || shouldSkip(word)) continue;
+    if (!word) continue;
     const bare = word.replace(/^['’]+|['’]+$/g, "");
     const common = COMMON_TYPOS[lang][bare.toLowerCase()];
+    // shouldSkip drops one-letter words, names and code; a word in one of the tables ("u", "ik") is known, not noise.
     if (common) {
       out.typos.push({ id: t.id, replace: true, to: transferCase(word, common), confidence: 0.99, source: "table" });
       continue;
     }
-    const learned = lookup(library, bare);
+    const learned = lookup(library, bare, tone);
+    if (!common && !learned && shouldSkip(word)) continue;
     if (learned && (learned.lang === lang || !learned.lang)) {
       out.typos.push({ id: t.id, replace: true, to: transferCase(word, learned.to), confidence: 0.98, source: "library" });
       continue;

@@ -5,6 +5,7 @@ import { jevConfigured, jevDecide, JevError, type JevQuestion } from "@/lib/jev"
 import { anthropicConfigured, anthropicKey, HaikuError } from "@/lib/haiku";
 import { thresholds } from "@/lib/thresholds";
 import { transferCase, type Lang } from "@/lib/text";
+import { introducesMachinePunctuation } from "@/lib/slop";
 import { logEvent, scrub } from "@/lib/log";
 import { arr, id, num, rateLimit, readJson, spendBudget, str, strHead, word, NO_STORE } from "@/lib/guard";
 
@@ -84,7 +85,7 @@ export async function POST(req: Request) {
   }
   const usable = items
     .map((i) => ({ item: i, p: proposals.find((p) => p.id === i.id) }))
-    .filter((x): x is { item: Item; p: { id: string; replacement: string; sure: boolean } } => !!x.p && x.p.sure && typeof x.p.replacement === "string" && !!x.p.replacement.trim() && x.p.replacement.length <= 48 && !/[\r\n<>]/.test(x.p.replacement) && x.p.replacement.trim().toLowerCase() !== x.item.word.toLowerCase() && x.p.replacement.trim().split(/\s+/).length <= (x.item.word.length >= 8 ? 6 : 3)); // long run-together words may hide a whole phrase
+    .filter((x): x is { item: Item; p: { id: string; replacement: string; sure: boolean } } => !!x.p && x.p.sure && typeof x.p.replacement === "string" && !!x.p.replacement.trim() && x.p.replacement.length <= 48 && !/[\r\n<>]/.test(x.p.replacement) && !introducesMachinePunctuation(x.item.left + x.item.right, x.p.replacement) && x.p.replacement.trim().toLowerCase() !== x.item.word.toLowerCase() && x.p.replacement.trim().split(/\s+/).length <= (x.item.word.length >= 8 ? 6 : 3)); // long run-together words may hide a whole phrase
   if (!usable.length) {
     logEvent({ route: "resolve", ms: Date.now() - t0, lang, in: items.map((i) => ({ word: scrub(i.word) })), out: { proposals: proposals.map((p) => ({ id: p.id, replacement: scrub(String(p.replacement ?? "")), sure: p.sure })), why: "none_usable" } });
     return NextResponse.json({ decisions: [], ms: Date.now() - t0 });

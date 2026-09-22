@@ -223,7 +223,10 @@ class Engine {
     // 1. common typo table: local, instant
     const bare = w.word.replace(/^['’]+|['’]+$/g, "");
     const key = bare.toLowerCase();
-    const learned = this.library.entries[key] && !this.library.never.includes(key) && (this.library.entries[key].lang === lang || !this.library.entries[key].lang) ? this.library.entries[key].to : null;
+    // Texting shorthand ("u", "pls") is only spelled out when the tone asks for it; otherwise the writer's form stands.
+    const shorthandOk = (this.library.shorthandTones ?? []).includes(s.tone || "as-written");
+    const entry = this.library.entries[key] ?? (shorthandOk ? this.library.shorthand?.[key] : undefined);
+    const learned = entry && !this.library.never.includes(key) && (entry.lang === lang || !entry.lang) ? entry.to : null;
     const common = text.COMMON_TYPOS[lang][key] || learned;
     if (common && !this.never.has(w.word.toLowerCase())) {
       this.rewrite(w.start, w.word, text.transferCase(w.word, common), tailAfter(), "typo");

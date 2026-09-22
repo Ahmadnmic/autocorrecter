@@ -58,6 +58,11 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     private var pendingForeign: Pair<String, String>? = null // (word, anchorLeft) waiting for the next word before translating
 
     /** The shared library plus this phone's own profile (reverted words, corrections kept here twice). */
+    private fun expandsShorthand(): Boolean {
+        val tones = library.optJSONArray("shorthandTones") ?: return false
+        return (0 until tones.length()).any { tones.optString(it) == prefs.tone }
+    }
+
     fun refreshLibrary() = api.pool.execute { api.get("/api/library?device=" + prefs.session)?.let { library = it } }
 
     /**
@@ -89,6 +94,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val lang = currentLang(before)
         val bare = w.word.trim('\'', '’').lowercase()
         val learned = library.optJSONObject("entries")?.optJSONObject(bare)
+            // Texting shorthand ("u", "pls", "ik") is only spelled out when the tone asks for it; otherwise it stands.
+            ?: if (expandsShorthand()) library.optJSONObject("shorthand")?.optJSONObject(bare) else null
         val neverLib = library.optJSONArray("never")?.let { a -> (0 until a.length()).any { a.optString(it) == bare } } ?: false
         val table = TextUtil.commonTypos[lang]?.get(bare) ?: if (learned != null && !neverLib && (learned.optString("lang", lang) == lang)) learned.optString("to") else null
         if (table != null && !never.contains(w.word.lowercase())) {

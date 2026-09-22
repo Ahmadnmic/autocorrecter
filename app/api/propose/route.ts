@@ -4,7 +4,7 @@ import { jevConfigured, jevDecide, JevError } from "@/lib/jev";
 import { anthropicConfigured, proposeImprovements, rewriteSentence, HaikuError } from "@/lib/haiku";
 import { thresholds } from "@/lib/thresholds";
 import { nthWordOccurrence, transferCase, type Lang } from "@/lib/text";
-import { isSlop } from "@/lib/slop";
+import { introducesMachinePunctuation, isSlop } from "@/lib/slop";
 import { logEvent, scrub } from "@/lib/log";
 import { checkSecret, num, rateLimit, readJson, spendBudget, str, NO_STORE } from "@/lib/guard";
 
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     const lastSentence = body.paused === true ? lastSentenceOf(window) : null;
     const [proposals, rewriteRaw] = await Promise.all([
       proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true, fmt),
-      lastSentence ? rewriteSentence(lastSentence.text, lang).catch(() => null) : Promise.resolve(null),
+      lastSentence ? rewriteSentence(lastSentence.text, lang, 5000, tone).catch(() => null) : Promise.resolve(null),
     ]);
     const tHaiku = Date.now() - tHaiku0;
     let rewrite: { original: string; offset: number; to: string; confidence: number; reason: string } | undefined;
@@ -75,13 +75,15 @@ export async function POST(req: Request) {
     // or a capital added at the ends is not: a text message without them is fine as written.
     const innerPunct = (s: string) => s.trim().replace(/^[^\p{L}\p{N}]+/u, "").replace(/[^\p{L}\p{N}]+$/u, "").replace(/[^,;:—–-]+/g, "");
     if (lastSentence && rewriteRaw && bare(rewriteRaw.to) === bare(lastSentence.text) && innerPunct(rewriteRaw.to) === innerPunct(lastSentence.text)) rewriteWhy = "ends_only";
+    // Never hand the writer an em dash, en dash or ellipsis character they were not already using.
+    if (lastSentence && rewriteRaw && introducesMachinePunctuation(window, rewriteRaw.to)) rewriteWhy = "machine_punctuation";
     if (lastSentence && rewriteRaw && !rewriteWhy) {
       const g = await jevDecide(
-        { task: "Inline autocorrect on a phone. A repair of one typed sentence was proposed. Approve only if it clearly says what the writer meant, more readably, without adding or changing meaning.", language: lang, original_sentence: lastSentence.text, proposed_sentence: rewriteRaw.to, proposer_reason: rewriteRaw.reason },
+        { task: `Inline autocorrect on a phone. A repair of one typed sentence was proposed. Approve only if it clearly says what the writer meant, more readably, without adding or changing meaning${tone === "as-written" ? "" : `, and fits the ${tone} tone the writer asked for`}.`, language: lang, tone, original_sentence: lastSentence.text, proposed_sentence: rewriteRaw.to, proposer_reason: rewriteRaw.reason },
         {
           choice: { type: "choice", instructions: "Which should stand in the writer's message?", criteria: { keep_original: "Keep the original sentence.", use_rewrite: "Use the proposed sentence." } },
           meaning: { type: "noul", instructions: "Does the proposed sentence keep exactly the writer's intended meaning?" },
-          needed: { type: "noul", instructions: "Was the original sentence hard to read, ungrammatical, or missing punctuation a reader needs (for example a comma between two clauses), so that a repair is needed at all?" },
+          needed: { type: "noul", instructions: `Was the original sentence hard to read, ungrammatical, or missing punctuation a reader needs (for example a comma between two clauses)${tone === "as-written" ? "" : `, or clearly wrong for the ${tone} tone the writer asked for`}, so that a repair is needed at all?` },
         },
       );
       const conf = g.choice?.confidence ?? 0;
@@ -94,7 +96,7 @@ export async function POST(req: Request) {
     // Hard anti-slop filter: no banned alternative ever reaches the gate, whatever the model said.
     const located = proposals
       // Model output is untrusted: alternatives must be short plain text, never line breaks or markup.
-      .map((p) => ({ ...p, alternatives: p.alternatives.filter((a) => typeof a === "string" && a.length <= 40 && !/[\r\n<>]/.test(a) && !isSlop(a)), offset: nthWordOccurrence(window, p.original, p.occurrence) }))
+      .map((p) => ({ ...p, alternatives: p.alternatives.filter((a) => typeof a === "string" && a.length <= 40 && !/[\r\n<>]/.test(a) && !isSlop(a) && !introducesMachinePunctuation(window, a)), offset: nthWordOccurrence(window, p.original, p.occurrence) }))
       .filter((p) => p.offset >= 0 && p.alternatives.length > 0);
     if (located.length === 0) {
       if (rewrite) logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone, paused: true }, out: { rewrite: { original: scrub(rewrite.original), to: scrub(rewrite.to), confidence: rewrite.confidence } } });

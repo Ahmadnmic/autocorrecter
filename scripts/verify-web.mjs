@@ -67,6 +67,12 @@ const post = async (path, body) => {
   const clean = await post("/api/propose", { window: "The meeting is at three and we will bring the slides", lang: "en", aggressiveness: 0.5, skipPrefilter: true, paused: true });
   ok("propose: leaves a clean sentence alone", !clean.json.rewrite, clean.json.rewrite?.to ?? "");
 }
+// never introduces machine punctuation the writer is not using
+{
+  const { json } = await post("/api/propose", { window: "i was going to send it today but the file is to big so i will send it tomorrow instead ok", lang: "en", aggressiveness: 0.5, skipPrefilter: true, paused: true });
+  const out = [json.rewrite?.to ?? "", ...(json.approved ?? []).map((a) => a.to)].join(" ");
+  ok("propose: no em dash, en dash or ellipsis introduced", !/[—–…]/.test(out), out.slice(0, 80));
+}
 // translation
 {
   const { json } = await post("/api/decide", { word: "hjælpsom", left: "The team was very ", lang: "en", aggressiveness: 0.5, translate: true });

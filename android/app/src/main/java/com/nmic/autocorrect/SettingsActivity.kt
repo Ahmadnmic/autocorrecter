@@ -1,10 +1,7 @@
 package com.nmic.autocorrect
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -21,7 +18,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
@@ -37,9 +33,6 @@ import java.io.File
 class SettingsActivity : AppCompatActivity() {
     private val releasesApi = "https://api.github.com/repos/Ahmadnmic/autocorrecter/releases/latest"
     private val main = Handler(Looper.getMainLooper())
-    private var downloadId = -1L
-    private var downloadReceiver: BroadcastReceiver? = null
-    private var progressPoll: Runnable? = null
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -109,51 +102,84 @@ class SettingsActivity : AppCompatActivity() {
             updateBtn.text = "Install $latestVersion"
             updateBtn.setOnClickListener { install() }
         }
-        fun pollProgress() {
-            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val c = dm.query(DownloadManager.Query().setFilterById(downloadId)) ?: return
-            c.use {
-                if (!it.moveToFirst()) return
-                val done = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                val st = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                when (st) {
-                    DownloadManager.STATUS_SUCCESSFUL -> { showInstall(); return }
-                    DownloadManager.STATUS_FAILED -> { progress.visibility = View.GONE; updateStatus.text = "Download failed. Check the network permission and try again."; updateBtn.text = "Retry download"; updateBtn.isEnabled = true; return }
-                    else -> {
-                        if (total > 0) { progress.isIndeterminate = false; progress.setProgressCompat((done * 100 / total).toInt(), true); updateStatus.text = "Downloading $latestVersion… ${done / 1024} / ${total / 1024} KB" }
-                        else { progress.isIndeterminate = true; updateStatus.text = "Downloading $latestVersion…" }
-                    }
-                }
-            }
-            progressPoll = Runnable { pollProgress() }.also { main.postDelayed(it, 400) }
-        }
+        // The APK is fetched by the app itself: the system download manager is unreliable on GrapheneOS (a queued
+        // download can sit in "pending" forever) and gives no error to show. This is a plain HTTPS GET with progress.
+        var downloading = false
         fun download() {
             val url = latestUrl ?: return
-            try {
-                if (apkFile.exists()) apkFile.delete()
-                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                val req = DownloadManager.Request(Uri.parse(url)).setTitle("Inline Autocorrect $latestVersion").setMimeType("application/vnd.android.package-archive")
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-                    .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "inline-autocorrect.apk")
-                downloadId = dm.enqueue(req)
-                updateBtn.text = "Downloading…"; updateBtn.isEnabled = false
-                progress.visibility = View.VISIBLE; progress.isIndeterminate = true
-                val recv = object : BroadcastReceiver() {
-                    override fun onReceive(ctx: Context, intent: Intent) {
-                        if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
-                        progressPoll?.let { main.removeCallbacks(it) }
-                        updateBtn.isEnabled = true
-                        pollProgress()
+            if (downloading) return
+            downloading = true
+            updateBtn.text = "Downloading…"; updateBtn.isEnabled = false
+            progress.visibility = View.VISIBLE; progress.isIndeterminate = true
+            Thread {
+                var err: String? = null
+                try {
+                    if (apkFile.exists()) apkFile.delete()
+                    val tmp = File(apkFile.parentFile, "update.part")
+                    if (tmp.exists()) tmp.delete()
+                    var link = url
+                    var conn: java.net.HttpURLConnection? = null
+                    // GitHub redirects release assets to a storage host; follow those redirects ourselves (HTTPS only).
+                    for (hop in 0 until 5) {
+                        val c = java.net.URL(link).openConnection() as java.net.HttpURLConnection
+                        c.connectTimeout = 15000; c.readTimeout = 30000; c.instanceFollowRedirects = false
+                        c.setRequestProperty("accept", "application/octet-stream")
+                        val code = c.responseCode
+                        if (code in 301..308) {
+                            val loc = c.getHeaderField("location") ?: break
+                            c.disconnect()
+                            if (!loc.startsWith("https://")) { err = "Insecure redirect"; break }
+                            link = loc
+                            continue
+                        }
+                        if (code != 200) { err = "Server said $code"; c.disconnect(); break }
+                        conn = c
+                        break
+                    }
+                    if (err == null && conn == null) err = "Too many redirects"
+                    if (conn != null) {
+                        val total = conn.contentLengthLong
+                        conn.inputStream.use { input ->
+                            java.io.FileOutputStream(tmp).use { out ->
+                                val buf = ByteArray(64 * 1024)
+                                var done = 0L
+                                var lastPost = 0L
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n <= 0) break
+                                    out.write(buf, 0, n)
+                                    done += n
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastPost > 200) {
+                                        lastPost = now
+                                        val d = done
+                                        runOnUiThread {
+                                            if (total > 0) { progress.isIndeterminate = false; progress.setProgressCompat((d * 100 / total).toInt(), true); updateStatus.text = "Downloading $latestVersion… ${d / 1024 / 1024} of ${total / 1024 / 1024} MB" }
+                                            else updateStatus.text = "Downloading $latestVersion… ${d / 1024 / 1024} MB"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        conn.disconnect()
+                        if (tmp.length() < 1_000_000) err = "The download was incomplete (${tmp.length() / 1024} KB)"
+                        else if (!tmp.renameTo(apkFile)) err = "Could not save the file"
+                    }
+                } catch (e: Exception) {
+                    err = e.message ?: e.javaClass.simpleName
+                }
+                runOnUiThread {
+                    downloading = false
+                    updateBtn.isEnabled = true
+                    progress.visibility = View.GONE
+                    if (err == null) showInstall()
+                    else {
+                        updateStatus.text = "Download failed: $err. Tap to try again, or open the release page in a browser."
+                        updateBtn.text = "Retry download"
+                        updateBtn.setOnClickListener { download() }
                     }
                 }
-                downloadReceiver?.let { unregisterReceiver(it) }
-                downloadReceiver = recv
-                ContextCompat.registerReceiver(this, recv, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
-                pollProgress()
-            } catch (e: Exception) {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            }
+            }.start()
         }
         fun check() {
             updateBtn.isEnabled = false
@@ -214,12 +240,6 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(ScrollView(this).apply { addView(root); isVerticalScrollBarEnabled = false; fitsSystemWindows = true })
         if (!prefs.welcomed) showWelcome(prefs)
         if (apkFile.exists() && apkFile.length() > 1_000_000) { latestVersion = "downloaded update"; updateStatus.text = "An update was downloaded earlier. Install it, or check again for a newer one."; updateBtn.text = "Install downloaded update"; updateBtn.setOnClickListener { install() } }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        progressPoll?.let { main.removeCallbacks(it) }
-        downloadReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) {} }
     }
 
     /** First-open explainer: how corrections happen, what the chips and the dot mean, how to undo. */

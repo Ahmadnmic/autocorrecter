@@ -31,7 +31,7 @@ function logClient(ev: LogEv) {
     fetch("/api/log", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client: "web", session: SESSION, events }), keepalive: true }).catch(() => {});
   }, 1500);
 }
-type Library = { version: number; count: number; updatedAt: string; entries: Record<string, { to: string; n: number; lang: string }>; never: string[] };
+type Library = { version: number; count: number; updatedAt: string; entries: Record<string, { to: string; n: number; lang: string }>; never: string[]; shorthand?: Record<string, { to: string; n: number; lang: string }>; shorthandTones?: string[] };
 type Release = { version: string; notes?: string; assets: Record<string, string>; library?: { version: number; count: number; updatedAt: string } };
 
 export type Tone = "as-written" | "neutral" | "formal" | "professional" | "casual" | "friendly" | "academic" | "concise";
@@ -559,7 +559,8 @@ export default function Page() {
     const lang0 = currentLang(snap.text);
     const bareKey = w.word.replace(/^['’]+|['’]+$/g, "").toLowerCase();
     const lib = libraryRef.current;
-    const learned = lib && !lib.never.includes(bareKey) ? lib.entries[bareKey] : undefined;
+    const shorthandOk = (lib?.shorthandTones ?? []).includes(tone);
+    const learned = lib && !lib.never.includes(bareKey) ? (lib.entries[bareKey] ?? (shorthandOk ? lib.shorthand?.[bareKey] : undefined)) : undefined;
     const table = COMMON_TYPOS[lang0][bareKey] ?? (learned && (learned.lang === lang0 || !learned.lang) ? learned.to : undefined);
     if (table && w.start >= lockRef.current && !neverRef.current.has(w.word.toLowerCase())) {
       applyChange({ ...w, old: w.word, to: transferCase(w.word, table), kind: "typo", confidence: 0.99, version: snap.version, note: learned && !COMMON_TYPOS[lang0][bareKey] ? "learned" : undefined });
