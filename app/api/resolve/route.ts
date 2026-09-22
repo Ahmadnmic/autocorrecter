@@ -63,12 +63,11 @@ export async function POST(req: Request) {
         system: [
           {
             type: "text",
-            text: `The writer is typing in ${lang === "da" ? "Danish" : "English"}. Each item is a word the spell-checker could not recognise or fix. Using the text before and after it, give the word or short phrase (1-3 words) the writer meant: a mistyped word ("recieve" -> "receive"), two words run together ("woyou" -> "would you", "ofcourse" -> "of course", "alot" -> "a lot"), or a keyboard slip. Keep the writer's language. Set sure=false when the word is a name, a code identifier, slang, another language, or genuinely ambiguous; then replacement may equal the word. Never rewrite anything except that word.`,
+            text: `The writer is typing in ${lang === "da" ? "Danish" : "English"}. Each item is a word the spell-checker could not recognise or fix. Using the text before and after it, give the word or short phrase (usually 1-3 words; up to 6 when several words were run together, e.g. "iwanttodothis" -> "I want to do this") the writer meant: a mistyped word ("recieve" -> "receive"), two words run together ("woyou" -> "would you", "ofcourse" -> "of course", "alot" -> "a lot"), or a keyboard slip. Keep the writer's language. Set sure=false when the word is a name, a code identifier, slang, another language, or genuinely ambiguous; then replacement may equal the word. Never rewrite anything except that word.`,
             cache_control: { type: "ephemeral" },
           },
         ],
-        messages: [{ role: "user", content: list }],
-        output_config: { format: { type: "json_schema", schema: SCHEMA } },
+        messages: [{ role: "user", content: list + '\n\nAnswer with JSON only: {"items":[{"id":"","replacement":"","sure":true}]}' }],
       }),
       signal: ctrl.signal,
       cache: "no-store",
@@ -76,15 +75,20 @@ export async function POST(req: Request) {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw new HaikuError(`Anthropic HTTP ${res.status}`, res.status, json);
     const text = ((json.content as Array<{ type: string; text?: string }>) ?? []).find((c) => c.type === "text")?.text ?? "{}";
-    proposals = (JSON.parse(text) as { items?: typeof proposals }).items ?? [];
+    const m = /\{[\s\S]*\}/.exec(text);
+    proposals = (JSON.parse(m ? m[0] : text) as { items?: typeof proposals }).items ?? [];
+    if (!Array.isArray(proposals)) proposals = [];
   } catch (e) {
     void e;
     return NextResponse.json({ decisions: [], why: "haiku_error", ms: Date.now() - t0 }, { status: 200, headers: NO_STORE });
   }
   const usable = items
     .map((i) => ({ item: i, p: proposals.find((p) => p.id === i.id) }))
-    .filter((x): x is { item: Item; p: { id: string; replacement: string; sure: boolean } } => !!x.p && x.p.sure && typeof x.p.replacement === "string" && !!x.p.replacement.trim() && x.p.replacement.length <= 48 && !/[\r\n<>]/.test(x.p.replacement) && x.p.replacement.trim().toLowerCase() !== x.item.word.toLowerCase() && x.p.replacement.trim().split(/\s+/).length <= 3);
-  if (!usable.length) return NextResponse.json({ decisions: [], ms: Date.now() - t0 });
+    .filter((x): x is { item: Item; p: { id: string; replacement: string; sure: boolean } } => !!x.p && x.p.sure && typeof x.p.replacement === "string" && !!x.p.replacement.trim() && x.p.replacement.length <= 48 && !/[\r\n<>]/.test(x.p.replacement) && x.p.replacement.trim().toLowerCase() !== x.item.word.toLowerCase() && x.p.replacement.trim().split(/\s+/).length <= (x.item.word.length >= 8 ? 6 : 3)); // long run-together words may hide a whole phrase
+  if (!usable.length) {
+    logEvent({ route: "resolve", ms: Date.now() - t0, lang, in: items.map((i) => ({ word: scrub(i.word) })), out: { proposals: proposals.map((p) => ({ id: p.id, replacement: scrub(String(p.replacement ?? "")), sure: p.sure })), why: "none_usable" } });
+    return NextResponse.json({ decisions: [], ms: Date.now() - t0 });
+  }
 
   // 2. Jev gate.
   if (!jevConfigured()) return NextResponse.json({ decisions: usable.map(({ item, p }) => ({ id: item.id, replace: true, to: transferCase(item.word, p.replacement.trim()), confidence: 0.8 })), ms: Date.now() - t0 });

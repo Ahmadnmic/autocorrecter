@@ -239,11 +239,18 @@ class Engine {
     this.wordsSinceContext++;
     const window = this.buf.slice(-600);
     const wantContext = !this.contextInflight && window !== this.lastContextWindow && window.trim().split(/\s+/).length >= 6 && (this.wordsSinceContext >= 4 || /[.!?]/.test(boundary));
-    if (typos.length || recheck.length || wantContext) this.sendJev(typos, recheck, s, lang, wantContext ? window : null);
+    // The context pass runs alongside the batched call, not after it: the server's own pre-filter gates Haiku.
+    if (wantContext) {
+      this.wordsSinceContext = 0;
+      this.lastContextWindow = window;
+      this.contextInflight = true;
+      this.contextPass(window, lang, s, true);
+    }
+    if (typos.length || recheck.length) this.sendJev(typos, recheck, s, lang);
     this.resolveUnresolved();
   }
 
-  async sendJev(typos, recheck, s, lang, contextWindow = null) {
+  async sendJev(typos, recheck, s, lang) {
     const probe = s.lang === "auto" && (!this.lang || this.langProbe++ >= 10);
     if (probe) this.langProbe = 0;
     const body = {
@@ -255,30 +262,19 @@ class Engine {
       tone: s.tone || "as-written",
       typos: typos.map(({ id, word, left }) => ({ id, word, left })),
       recheck: recheck.map(({ id, word, alternatives, left, right }) => ({ id, word, alternatives, left, right })),
-      prefilter: contextWindow ? { window: contextWindow } : undefined,
     };
-    if (contextWindow) {
-      this.wordsSinceContext = 0;
-      this.lastContextWindow = contextWindow;
-      this.contextInflight = true;
-    }
     let res;
     try {
       this.inflight++;
       res = await this.post("/api/jev", body);
     } catch (e) {
       this.log(`jev error: ${e.message}`);
-      this.contextInflight = false;
       return;
     } finally {
       this.inflight--;
     }
     if (res.lang) this.lang = res.lang;
-    if (contextWindow) {
-      this.log(`prefilter worth=${res.prefilter?.worth ?? "?"} callHaiku=${!!res.prefilter?.callHaiku}`);
-      if (res.prefilter?.callHaiku) this.contextPass(contextWindow, res.lang || lang, s);
-      else this.contextInflight = false;
-    }
+
     for (const d of res.typos || []) {
       const t = typos.find((x) => x.id === d.id);
       if (!t) continue;
@@ -296,9 +292,9 @@ class Engine {
   }
 
   /** Haiku proposes better words for the window, Jev gates them; approved ones are applied where the text is intact. */
-  async contextPass(window, lang, s) {
+  async contextPass(window, lang, s, prefilter = false) {
     try {
-      const res = await this.post("/api/propose", { window, lang, aggressiveness: s.aggressiveness, tone: s.tone || "as-written", skipPrefilter: true }, 9000);
+      const res = await this.post("/api/propose", { window, lang, aggressiveness: s.aggressiveness, tone: s.tone || "as-written", skipPrefilter: !prefilter }, 9000);
       const approved = Array.isArray(res.approved) ? res.approved : [];
       this.log(`propose: ${res.proposed ?? 0} proposed, ${approved.length} approved${res.why ? ` (${res.why})` : ""}`);
       // Locate the window in the current buffer (text may have grown since); apply from the end so offsets hold.

@@ -28,9 +28,9 @@ Propose a replacement ONLY for a single word that is:
 - the wrong word for the intended meaning (a confusable such as their/there, then/than, lose/loose, og/at, nogen/nogle),
 - a clear collocation or preposition error a native speaker would notice.
 
-Do NOT propose: stylistic upgrades, synonyms of equal quality, tone changes, changes to names, brands, quotes, code, numbers, or anything in the last two words of the window. Never merge or split words. Keep the writer's language and register.
+Do NOT propose: stylistic upgrades, synonyms of equal quality, tone changes, changes to names, brands, quotes, code, numbers, or anything in the last two words of the window. Do not merge words; a word that is several words run together ("canyouhelp", "iwanttodothis") may be split into the phrase the writer meant. Keep the writer's language and register.
 
-Return at most 3 proposals. An empty list is the expected answer most of the time. "occurrence" is the 1-based index of the word among identical words in the window, so the correct one can be located. "category" is "error" for a wrong word, grammar or spelling, and "tone" for a word that only clashes with the requested target tone.
+Return at most 3 proposals. An empty list is the expected answer most of the time. Be terse: one alternative (a second only when two are equally likely) and a "reason" of at most 5 words; speed matters more than explanation. "occurrence" is the 1-based index of the word among identical words in the window, so the correct one can be located. "category" is "error" for a wrong word, grammar or spelling, and "tone" for a word that only clashes with the requested target tone.
 
 Examples:
 Window: "I put the keys their and left. Then we ate lunch at" -> proposals: [{"original":"their","occurrence":1,"alternatives":["there"],"reason":"place, not possessive"}]
@@ -83,7 +83,9 @@ const TONE_GUIDE: Record<string, string> = {
 
 const TONE_MODE = `TONE MODE: a target tone is set, so be assertive about register. Besides errors, propose a replacement for EVERY word or short phrase (up to 3 words) that a careful editor would change to fit the tone: slang, casual intensifiers, vague fillers (stuff, things, a lot, a bunch of), contractions when the tone is formal, stiff or bureaucratic words when the tone is casual or friendly, needlessly long words when the tone is concise. Up to 5 proposals. Each proposal is still a single replacement span: "original" is the exact words in the window (1-3 words) and the alternative is the phrase that replaces them. Do not change names, quotes, numbers, or the last two words.`;
 
-export async function proposeImprovements(window: string, lang: string, tone = "as-written", timeoutMs = 6000, paused = false): Promise<Proposal[]> {
+/** Output format: constrained JSON schema (guaranteed shape, slower) or plain JSON asked for in the prompt (faster). */
+export type HaikuFormat = "schema" | "free";
+export async function proposeImprovements(window: string, lang: string, tone = "as-written", timeoutMs = 6000, paused = false, format: HaikuFormat = (process.env.HAIKU_FORMAT as HaikuFormat) || "free"): Promise<Proposal[]> {
   if (!anthropicConfigured()) throw new HaikuError("ANTHROPIC_API_KEY is not set", 503);
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -99,8 +101,8 @@ export async function proposeImprovements(window: string, lang: string, tone = "
         model: MODEL,
         max_tokens: tone === "as-written" ? 400 : 700,
         system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-        messages: [{ role: "user", content: `${TONE_GUIDE[tone] ? TONE_GUIDE[tone] + "\n" + TONE_MODE + "\n" : ""}${paused ? "The writer has paused, so the window is complete: the last two words may be proposed as well.\n" : ""}Language: ${lang}\nWindow:\n${window}` }],
-        output_config: { format: { type: "json_schema", schema: SCHEMA } },
+        messages: [{ role: "user", content: `${TONE_GUIDE[tone] ? TONE_GUIDE[tone] + "\n" + TONE_MODE + "\n" : ""}${paused ? "The writer has paused, so the window is complete: the last two words may be proposed as well.\n" : ""}Language: ${lang}\nWindow:\n${window}${format === "free" ? '\n\nAnswer with JSON only, no prose: {"proposals":[{"original":"","occurrence":1,"alternatives":[""],"reason":"","category":"error"}]}' : ""}` }],
+        ...(format === "schema" ? { output_config: { format: { type: "json_schema", schema: SCHEMA } } } : {}),
       }),
       signal: ctrl.signal,
       cache: "no-store",
@@ -108,11 +110,14 @@ export async function proposeImprovements(window: string, lang: string, tone = "
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw new HaikuError(`Anthropic HTTP ${res.status}`, res.status, json);
     if (json.stop_reason === "refusal") return [];
+    if (json.stop_reason === "max_tokens") console.warn("propose: output truncated at max_tokens");
     const content = (json.content as Array<{ type: string; text?: string }>) ?? [];
     const text = content.find((c) => c.type === "text")?.text ?? "";
     let parsed: { proposals?: unknown } = {};
     try {
-      parsed = JSON.parse(text);
+      // Plain-JSON mode may wrap the object in a code fence or a sentence; take the outermost braces.
+      const m = /\{[\s\S]*\}/.exec(text);
+      parsed = JSON.parse(m ? m[0] : text);
     } catch {
       return [];
     }
@@ -123,7 +128,7 @@ export async function proposeImprovements(window: string, lang: string, tone = "
         original: p.original.trim(),
         occurrence: Math.max(1, Math.floor(Number(p.occurrence) || 1)),
         alternatives: (Array.isArray(p.alternatives) ? p.alternatives : []).map(String).map((s) => s.trim()).filter(Boolean).slice(0, 3),
-        reason: String(p.reason ?? "").slice(0, 120),
+        reason: String(p.reason ?? "").replace(/[{}\[\]"]+[\s\S]*$/, "").trim().slice(0, 120),
         category: ((p as Proposal).category === "tone" ? "tone" : "error") as "error" | "tone",
       }))
       .filter((p) => p.alternatives.length > 0 && !p.alternatives.includes(p.original) && p.original.split(/\s+/).length <= 3)

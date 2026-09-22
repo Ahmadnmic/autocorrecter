@@ -118,17 +118,18 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val window = before.takeLast(600)
         val wantContext = !contextInflight && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 3 && (wordsSinceContext >= 2 || boundary in ".!?") && System.currentTimeMillis() - lastContextAt > 1200
         if (typos.length() == 0) flushPendingForeign(lang, before) // the new word is not one the server checks; the earlier foreign word stands alone
-        if (typos.length() == 0 && recheck.length() == 0 && !wantContext) { resolveLate(); return }
+        if (typos.length() == 0 && recheck.length() == 0) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
         if (probe) langProbe = 0
         val body = JSONObject().put("client", "android").put("session", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
         if (probe) body.put("doc", before)
-        if (wantContext) { body.put("prefilter", JSONObject().put("window", window)); wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextInflight = true }
+        // The context pass runs alongside the batched call, not after it: the server's own pre-filter gates Haiku.
+        if (wantContext) { wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextInflight = true; contextPass(window, lang, paused = false, prefilter = true) }
         val anchorLeft = before.substring(0, w.start)
         inflight.incrementAndGet()
         api.pool.execute {
             val res = try { api.post("/api/jev", body) } finally { inflight.decrementAndGet() }
-            if (res == null) { main.post { contextInflight = false }; return@execute }
+            if (res == null) return@execute
             main.post {
                 res.optString("lang").takeIf { it.isNotEmpty() }?.let { this.lang = it }
                 val ts = res.optJSONArray("typos") ?: JSONArray()
@@ -153,10 +154,6 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
                     val sp = rcMeta[d.optString("id")] ?: continue
                     if (d.optBoolean("replace") && d.has("to")) applyIfIntact(sp.word, d.getString("to"), before.substring(0, sp.start), "recheck")
                     else if (d.optDouble("confidence", 0.0) >= 0.9) keepVerdicts[sp.word.lowercase()] = (keepVerdicts[sp.word.lowercase()] ?: 0) + 1
-                }
-                val pf = res.optJSONObject("prefilter")
-                if (wantContext) {
-                    if (pf != null && pf.optBoolean("callHaiku")) contextPass(window, res.optString("lang").ifEmpty { lang }) else contextInflight = false
                 }
                 resolveLate()
             }
@@ -196,8 +193,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     }
 
     /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
-    private fun contextPass(window: String, lang: String, paused: Boolean = false) {
-        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", true).put("paused", paused)
+    private fun contextPass(window: String, lang: String, paused: Boolean = false, prefilter: Boolean = false) {
+        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", !prefilter).put("paused", paused)
         inflight.incrementAndGet()
         api.pool.execute {
             val res = try { api.post("/api/propose", body, 9000) } finally { inflight.decrementAndGet() }

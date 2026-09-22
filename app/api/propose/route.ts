@@ -11,7 +11,7 @@ import { checkSecret, num, rateLimit, readJson, spendBudget, str, NO_STORE } fro
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean; paused?: boolean };
+type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean; paused?: boolean; fmt?: string };
 const TONES = new Set(["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"]);
 
 export async function POST(req: Request) {
@@ -47,13 +47,16 @@ export async function POST(req: Request) {
 
     // 2. Haiku proposes.
     // Tone mode returns more proposals and runs longer; the function budget is 15 s.
-    const proposals = await proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true);
+    const tHaiku0 = Date.now();
+    const fmt = body.fmt === "schema" || body.fmt === "free" ? body.fmt : undefined;
+    const proposals = await proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true, fmt);
+    const tHaiku = Date.now() - tHaiku0;
     // Hard anti-slop filter: no banned alternative ever reaches the gate, whatever the model said.
     const located = proposals
       // Model output is untrusted: alternatives must be short plain text, never line breaks or markup.
       .map((p) => ({ ...p, alternatives: p.alternatives.filter((a) => typeof a === "string" && a.length <= 40 && !/[\r\n<>]/.test(a) && !isSlop(a)), offset: nthWordOccurrence(window, p.original, p.occurrence) }))
       .filter((p) => p.offset >= 0 && p.alternatives.length > 0);
-    if (located.length === 0) return NextResponse.json({ approved: [], why: "no_proposals", worth, ms: Date.now() - t0 });
+    if (located.length === 0) return NextResponse.json({ approved: [], why: "no_proposals", worth, ms: Date.now() - t0, t: { haiku: tHaiku } });
 
     // 3. Jev gates each proposal.
     const state: Record<string, unknown> = { task: "Inline autocorrect gate. A proposer suggested word replacements. Approve only replacements the author would clearly want; when in doubt keep the original." + toneNote, language: lang, tone, window };
@@ -78,7 +81,9 @@ export async function POST(req: Request) {
       questions[`prefers_${i}`] = { type: "noul", instructions: `For proposal_${i}: would the author clearly prefer the best replacement over their original word?` };
       questions[`reads_${i}`] = { type: "noul", instructions: `For proposal_${i}: read sentence_with_replacement (it may be unfinished at the end, and it may still contain other, unrelated mistakes; ignore both). Does the replacement itself fit its slot grammatically and keep the intended meaning?` };
     });
+    const tGate0 = Date.now();
     const gate = await jevDecide(state, questions);
+    const tGate = Date.now() - tGate0;
     // Gate details for tuning; only with the admin secret.
     const debug = body.debug === true && !checkSecret(req, "ADMIN_SECRET") ? located.map((p, i) => ({ original: p.original, alternatives: p.alternatives, category: p.category, reason: p.reason, choice: gate[`choice_${i}`]?.choice, confidence: gate[`choice_${i}`]?.confidence, prefers: gate[`prefers_${i}`]?.noul, reads: gate[`reads_${i}`]?.noul })) : undefined;
     const approved = located
@@ -99,7 +104,7 @@ export async function POST(req: Request) {
       })
       .filter((x): x is NonNullable<typeof x> => !!x);
     logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone }, out: { worth, proposed: located.map((p) => ({ original: scrub(p.original), alternatives: p.alternatives, category: p.category, reason: p.reason })), approved } });
-    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0, debug }, { headers: NO_STORE });
+    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0, t: { haiku: tHaiku, gate: tGate }, debug }, { headers: NO_STORE });
   } catch (e) {
     const err = e as JevError | HaikuError;
     console.error("propose failed:", err.message, (err as HaikuError).body ? JSON.stringify((err as HaikuError).body).slice(0, 300) : "");
