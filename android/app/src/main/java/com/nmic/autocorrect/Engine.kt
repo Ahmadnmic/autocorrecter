@@ -14,8 +14,11 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     interface IO {
         fun textBeforeCursor(n: Int): String
         fun textAfterCursor(n: Int): String
-        /** Replace `len` chars ending `backFromCursor` chars before the cursor with `to`. */
-        fun replaceBeforeCursor(backFromCursor: Int, len: Int, to: String): Boolean
+        /**
+         * Replace the `len` characters that start `startBack` characters before the cursor with `to`, leaving the text
+         * after them (and the cursor's logical position) untouched.
+         */
+        fun replaceBeforeCursor(startBack: Int, len: Int, to: String): Boolean
         fun onChange(change: Change)
     }
     data class Change(val id: String, val old: String, val to: String, val kind: String, var reverted: Boolean = false, val at: Long = System.currentTimeMillis())
@@ -54,10 +57,14 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         return apply(old, f.to, tail, "grammar", before.substring(0, f.start))
     }
 
-    /** Called after a boundary character was committed. */
-    fun onBoundary() {
+    /**
+     * Called right after a boundary character was committed, with the text before the cursor as it was at that
+     * moment, so letters typed a split second later are never mistaken for the finished word.
+     */
+    fun onBoundary(snapshot: String? = null) {
         if (!prefs.enabled) return
-        val before = io.textBeforeCursor(500)
+        val before = snapshot ?: io.textBeforeCursor(500)
+        if (before.isEmpty() || TextUtil.isWordChar(before.last())) return
         val w = TextUtil.wordEndingAt(before, before.length - 1) ?: return
         val tail = before.substring(w.end)
         val lang = currentLang(before)
@@ -206,13 +213,13 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (idx < 0) return false
         val start = idx + anchorLeft.takeLast(60).length
         val tail = before.substring(start + old.length)
-        if (tail.length > 60) return false
+        if (tail.length > 500) return false
         return apply(old, to, tail, kind, before.substring(0, start))
     }
 
     private fun apply(old: String, to: String, tail: String, kind: String, left: String): Boolean {
         if (to == old || never.contains(old.lowercase()) && kind != "grammar") return false
-        val ok = io.replaceBeforeCursor(old.length + tail.length, old.length + tail.length, to + tail)
+        val ok = io.replaceBeforeCursor(old.length + tail.length, old.length, to)
         if (!ok) return false
         if (kind == "grammar" && old.isBlank() && to.isBlank()) return true // spacing only: not worth a chip
         val c = Change("${System.currentTimeMillis()}-${changes.size}", old, to, kind)
@@ -229,8 +236,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val idx = before.lastIndexOf(c.to)
         if (idx < 0) return false
         val tail = before.substring(idx + c.to.length)
-        if (tail.length > 60) return false
-        if (!io.replaceBeforeCursor(c.to.length + tail.length, c.to.length + tail.length, c.old + tail)) return false
+        if (tail.length > 500) return false
+        if (!io.replaceBeforeCursor(c.to.length + tail.length, c.to.length, c.old)) return false
         c.reverted = true
         never.add(c.old.lowercase())
         log(JSONObject().put("kind", "reverted").put("old", c.old).put("to", c.to).put("changeKind", c.kind).put("lang", currentLang(before)))

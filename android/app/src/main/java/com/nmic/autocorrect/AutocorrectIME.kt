@@ -78,9 +78,10 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         val c = ic() ?: return
         c.commitText(s, 1)
         if (!secureField && prefs.enabled) {
-            // Local grammar pass on every character (spacing, punctuation, capitals), then the word passes at a boundary.
+            // Local grammar pass on every character (spacing, punctuation, capitals), then the word passes at a boundary,
+            // synchronously and on a snapshot: the finished word is the one before this boundary, whatever comes next.
             engine.onChar()
-            if (s.length == 1 && !TextUtil.isWordChar(s[0])) main.post { engine.onBoundary() }
+            if (s.length == 1 && !TextUtil.isWordChar(s[0])) engine.onBoundary(c.getTextBeforeCursor(500, 0)?.toString())
         }
         updateShift()
     }
@@ -110,11 +111,30 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
     // ---- Engine.IO
     override fun textBeforeCursor(n: Int) = ic()?.getTextBeforeCursor(n, 0)?.toString() ?: ""
     override fun textAfterCursor(n: Int) = ic()?.getTextAfterCursor(n, 0)?.toString() ?: ""
-    override fun replaceBeforeCursor(backFromCursor: Int, len: Int, to: String): Boolean {
+    override fun replaceBeforeCursor(startBack: Int, len: Int, to: String): Boolean {
         val c = ic() ?: return false
+        // Preferred: select exactly the old range and commit the replacement over it, then put the cursor back where
+        // it was (shifted by the length difference). Nothing after the word is retyped.
+        val et = try { c.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0) } catch (e: Exception) { null }
+        if (et != null && et.selectionStart >= 0 && et.selectionStart == et.selectionEnd) {
+            val caret = et.startOffset + et.selectionStart
+            val s = caret - startBack
+            if (s >= 0) {
+                c.beginBatchEdit()
+                val ok = c.setSelection(s, s + len) && c.commitText(to, 1)
+                val newCaret = caret + to.length - len
+                c.setSelection(newCaret, newCaret)
+                c.endBatchEdit()
+                if (ok) return true
+            }
+        }
+        // Fallback for editors without extracted text: delete up to the cursor and recommit the changed tail.
+        val before = c.getTextBeforeCursor(startBack, 0)?.toString() ?: return false
+        if (before.length < startBack) return false
+        val tail = before.substring(len)
         c.beginBatchEdit()
-        c.deleteSurroundingText(len, 0)
-        c.commitText(to, 1)
+        c.deleteSurroundingText(startBack, 0)
+        c.commitText(to + tail, 1)
         c.endBatchEdit()
         return true
     }
