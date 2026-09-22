@@ -60,6 +60,13 @@ const post = async (path, body) => {
   const { json } = await post("/api/propose", { window: "Hey guys, the thing is kinda broken and we gotta fix a bunch of stuff before the demo, so please", lang: "en", aggressiveness: 0.5, tone: "formal", skipPrefilter: true });
   ok("propose: tone changes with a formal tone", (json.approved || []).some((a) => a.kind === "tone"), (json.approved || []).map((a) => `${a.original}->${a.to} (${a.kind})`).join(", ") || json.why);
 }
+// sentence repair on a pause (missing comma between clauses), and clean sentences left alone
+{
+  const { json } = await post("/api/propose", { window: "Hi i want to do it but cant how do i do it", lang: "en", aggressiveness: 0.5, skipPrefilter: true, paused: true });
+  ok("propose: repairs a sentence missing an inner comma", /,/.test(json.rewrite?.to ?? ""), json.rewrite?.to ?? "(none)");
+  const clean = await post("/api/propose", { window: "The meeting is at three and we will bring the slides", lang: "en", aggressiveness: 0.5, skipPrefilter: true, paused: true });
+  ok("propose: leaves a clean sentence alone", !clean.json.rewrite, clean.json.rewrite?.to ?? "");
+}
 // translation
 {
   const { json } = await post("/api/decide", { word: "hjælpsom", left: "The team was very ", lang: "en", aggressiveness: 0.5, translate: true });

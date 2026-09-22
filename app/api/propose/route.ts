@@ -70,16 +70,18 @@ export async function POST(req: Request) {
     const tHaiku = Date.now() - tHaiku0;
     let rewrite: { original: string; offset: number; to: string; confidence: number; reason: string } | undefined;
     let rewriteWhy = rewriteRaw ? "" : lastSentence ? "haiku_none" : "no_sentence";
-    // Punctuation and capitals alone are not a repair (an SMS without a full stop is fine); the words must change.
     const bare = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}'’ ]+/gu, " ").replace(/\s+/g, " ").trim();
-    if (lastSentence && rewriteRaw && bare(rewriteRaw.to) === bare(lastSentence.text)) rewriteWhy = "punctuation_only";
+    // Punctuation inside the sentence is a real repair (a missing comma before a clause, a comma splice). A full stop
+    // or a capital added at the ends is not: a text message without them is fine as written.
+    const innerPunct = (s: string) => s.trim().replace(/^[^\p{L}\p{N}]+/u, "").replace(/[^\p{L}\p{N}]+$/u, "").replace(/[^,;:—–-]+/g, "");
+    if (lastSentence && rewriteRaw && bare(rewriteRaw.to) === bare(lastSentence.text) && innerPunct(rewriteRaw.to) === innerPunct(lastSentence.text)) rewriteWhy = "ends_only";
     if (lastSentence && rewriteRaw && !rewriteWhy) {
       const g = await jevDecide(
         { task: "Inline autocorrect on a phone. A repair of one typed sentence was proposed. Approve only if it clearly says what the writer meant, more readably, without adding or changing meaning.", language: lang, original_sentence: lastSentence.text, proposed_sentence: rewriteRaw.to, proposer_reason: rewriteRaw.reason },
         {
           choice: { type: "choice", instructions: "Which should stand in the writer's message?", criteria: { keep_original: "Keep the original sentence.", use_rewrite: "Use the proposed sentence." } },
           meaning: { type: "noul", instructions: "Does the proposed sentence keep exactly the writer's intended meaning?" },
-          needed: { type: "noul", instructions: "Was the original sentence hard to read or ungrammatical, so that a repair is needed at all?" },
+          needed: { type: "noul", instructions: "Was the original sentence hard to read, ungrammatical, or missing punctuation a reader needs (for example a comma between two clauses), so that a repair is needed at all?" },
         },
       );
       const conf = g.choice?.confidence ?? 0;
