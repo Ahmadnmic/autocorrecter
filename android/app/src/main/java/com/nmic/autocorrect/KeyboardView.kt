@@ -100,8 +100,8 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
         val rows = rows()
         val rowH = height / rows.size.toFloat()
         // Stock keyboard gaps: 6.127% of the keyboard height vertically, 1.917% of the width horizontally.
-        val vGap = height * 0.06127f / 2f
-        val gap = width * 0.01917f / 2f
+        val vGap = height * 0.05f / 2f
+        val gap = width * 0.014f / 2f
         val radius = dp(6f)
         paintText.textSize = dp(21f)
         paintTextWhite.textSize = dp(21f)
@@ -155,7 +155,24 @@ class KeyboardView(ctx: Context, private val listener: Listener) : View(ctx) {
         }
     }
 
-    private fun keyAt(x: Float, y: Float): Pair<RectF, Key>? = rects.firstOrNull { it.first.contains(x, y) }
+    /**
+     * Hit test like the stock keyboard: every point on the keyboard belongs to the nearest key (the gaps between keys
+     * are not dead), and the touch is read a little above where the finger lands, because fingertips press below the
+     * spot the eye aims at.
+     */
+    private fun keyAt(x: Float, y0: Float): Pair<RectF, Key>? {
+        val y = (y0 - dp(5f)).coerceAtLeast(0f)
+        var best: Pair<RectF, Key>? = null
+        var bestD = Float.MAX_VALUE
+        for (e in rects) {
+            val r = e.first
+            val dx = when { x < r.left -> r.left - x; x > r.right -> x - r.right; else -> 0f }
+            val dy = when { y < r.top -> r.top - y; y > r.bottom -> y - r.bottom; else -> 0f }
+            val d = dx * dx + dy * dy
+            if (d < bestD) { bestD = d; best = e }
+        }
+        return best
+    }
 
     private fun haptic() {
         try {
