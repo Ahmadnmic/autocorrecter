@@ -14,6 +14,7 @@ class Prefs(ctx: Context) {
         set(v) = p.edit().putString("api", if (v.startsWith("https://")) v.trimEnd('/') else DEFAULT_API).apply()
     /** Words the writer reverted on this phone: never corrected again here, even before the server profile catches up. */
     var never: Set<String> get() = p.getStringSet("never", emptySet()) ?: emptySet(); set(v) = p.edit().putStringSet("never", v.take(500).toSet()).apply()
+    var welcomed: Boolean get() = p.getBoolean("welcomed", false); set(v) = p.edit().putBoolean("welcomed", v).apply()
     var session: String get() = p.getString("session", null) ?: java.util.UUID.randomUUID().toString().take(8).also { p.edit().putString("session", it).apply() }
         set(v) = p.edit().putString("session", v).apply()
 }

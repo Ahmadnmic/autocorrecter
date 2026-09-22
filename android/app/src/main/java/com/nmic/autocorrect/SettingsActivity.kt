@@ -12,6 +12,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.graphics.Color
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -200,12 +201,14 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(card(heading("Try it"), tryBox))
 
         // ---- Spell checker + server
+        val helpBtn = button("How it works", tonal = true) { showWelcome(prefs) }
         val spellBtn = button("Open spell checker settings", tonal = true) { try { startActivity(Intent("android.settings.SPELL_CHECKER_SETTINGS")) } catch (e: Exception) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } }
         val serverBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Server (HTTPS)" }
         serverBox.addView(TextInputEditText(serverBox.context).apply { setText(prefs.apiBase); setOnFocusChangeListener { _, f -> if (!f) prefs.apiBase = text.toString().trim() } })
-        root.addView(card(heading("More"), body("The spell checker works with any keyboard: typos are underlined and a tap accepts the suggestion. Settings → System → Languages → Spell checker."), spellBtn, serverBox, body("Text near the cursor is sent to the server for decisions. Passwords, numbers, e-mail, URL and incognito fields are never touched.")))
+        root.addView(card(heading("More"), helpBtn, body("The spell checker works with any keyboard: typos are underlined and a tap accepts the suggestion. Settings → System → Languages → Spell checker."), spellBtn, serverBox, body("Text near the cursor is sent to the server for decisions. Passwords, numbers, e-mail, URL and incognito fields are never touched.")))
 
         setContentView(ScrollView(this).apply { addView(root); isVerticalScrollBarEnabled = false; fitsSystemWindows = true })
+        if (!prefs.welcomed) showWelcome(prefs)
         if (apkFile.exists() && apkFile.length() > 1_000_000) { latestVersion = "downloaded update"; updateStatus.text = "An update was downloaded earlier. Install it, or check again for a newer one."; updateBtn.text = "Install downloaded update"; updateBtn.setOnClickListener { install() } }
     }
 
@@ -213,6 +216,33 @@ class SettingsActivity : AppCompatActivity() {
         super.onDestroy()
         progressPoll?.let { main.removeCallbacks(it) }
         downloadReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) {} }
+    }
+
+    /** First-open explainer: how corrections happen, what the chips and the dot mean, how to undo. */
+    private fun showWelcome(prefs: Prefs) {
+        val pad = dp(20)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, dp(8), pad, 0) }
+        fun line(icon: String, iconColour: String, title: String, text: String) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, dp(4)) }
+            row.addView(TextView(this).apply { this.text = icon; textSize = 14f; setTextColor(Color.WHITE); setPadding(dp(10), dp(4), dp(10), dp(4)); background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(Color.parseColor(iconColour)) } }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12); gravity = Gravity.CENTER_VERTICAL })
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(TextView(this).apply { this.text = title; textSize = 15f; setTypeface(typeface, android.graphics.Typeface.BOLD); setTextColor(color(com.google.android.material.R.attr.colorOnSurface)) })
+            col.addView(TextView(this).apply { this.text = text; textSize = 14f; setTextColor(color(com.google.android.material.R.attr.colorOnSurfaceVariant)); setLineSpacing(0f, 1.15f) })
+            row.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            body.addView(row)
+        }
+        line("abc", "#1A73E8", "It corrects while you type", "Type as usual. When you hit space, the word you just finished is checked: typos, a word that is wrong for the meaning, a stray word from the other language. Every few words the whole sentence is checked too, and again when you pause.")
+        line("teh → the", "#5F6368", "Each change shows as a chip", "The strip above the keys lists what was changed, newest first. Grey is a typo, orange a re-check, blue a word fixed from context, purple a translation or a sentence repair.")
+        line("↩", "#B3261E", "Tap a chip to undo", "Tapping a chip puts your original word back, and that word is never touched again on this phone. Backspace right after a change also undoes it.")
+        line("●", "#D93025", "The dot: red is thinking, green is done", "Red means a check is still running or waiting for the next word. Green means everything you typed has been checked. Wait for green before you send if you want every fix in.")
+        line("⎵", "#1E8E3E", "Hold the space bar", "Switches the language between Auto, English and Dansk. Auto follows the paragraph you are writing.")
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("How Inline Autocorrect works")
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("Got it") { _, _ -> prefs.welcomed = true }
+            .setNeutralButton("Show me again later", null)
+            .create()
+        dialog.show()
     }
 
     private fun color(attr: Int): Int = com.google.android.material.color.MaterialColors.getColor(this, attr, 0)
