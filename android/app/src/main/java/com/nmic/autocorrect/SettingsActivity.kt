@@ -226,6 +226,57 @@ class SettingsActivity : AppCompatActivity() {
         val toneHint = body("As written only fixes errors. Any other tone also swaps single words that clash with it.")
         root.addView(card(heading("Corrections"), aggrLabel, slider, langLabel, langGroup, langHint, toneLabel, toneGroup, toneHint))
 
+        // ---- My words: the writer's own corrections and the words they told us to leave alone
+        val wordList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun renderWords() {
+            wordList.removeAllViews()
+            val mine = prefs.myWords.toSortedMap()
+            val never = prefs.never.sorted()
+            if (mine.isEmpty() && never.isEmpty()) wordList.addView(body("Nothing yet. Add a word below, or tap a chip above the keyboard to undo a correction: that word is then left alone."))
+            for ((typed, to) in mine) {
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                row.addView(body("$typed → $to", dim = false), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "Remove"; cornerRadius = dp(18)
+                    setOnClickListener { prefs.myWords = prefs.myWords - typed; renderWords() }
+                })
+                wordList.addView(row)
+            }
+            for (w in never) {
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                row.addView(body("$w — left alone", dim = true), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "Correct again"; cornerRadius = dp(18)
+                    setOnClickListener { prefs.never = prefs.never - w; renderWords() }
+                })
+                wordList.addView(row)
+            }
+        }
+        renderWords()
+        val addBtn = button("Add a word") {
+            val typedBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "When I type" }
+            val typedEdit = TextInputEditText(typedBox.context).apply { setSingleLine() }
+            typedBox.addView(typedEdit)
+            val toBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Write this instead (leave empty to never touch it)" }
+            val toEdit = TextInputEditText(toBox.context).apply { setSingleLine() }
+            toBox.addView(toEdit)
+            val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(typedBox); addView(toBox) }
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Add a word")
+                .setView(form)
+                .setPositiveButton("Save") { _, _ ->
+                    val from = typedEdit.text.toString().trim().lowercase()
+                    val to = toEdit.text.toString().trim()
+                    if (from.isEmpty()) return@setPositiveButton
+                    if (to.isEmpty()) { prefs.never = prefs.never + from; prefs.myWords = prefs.myWords - from }
+                    else { prefs.myWords = prefs.myWords + (from to to); prefs.never = prefs.never - from }
+                    renderWords()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+        root.addView(card(heading("My words"), body("Your own corrections come before everything else, on this phone. A word with no replacement is never corrected."), wordList, addBtn))
+
         // ---- Try it
         val tryBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Type here: I definately recieved it ,and woyou please look"; setBoxCornerRadii(dp(14).toFloat(), dp(14).toFloat(), dp(14).toFloat(), dp(14).toFloat()) }
         tryBox.addView(TextInputEditText(tryBox.context).apply { minLines = 3; gravity = Gravity.TOP })

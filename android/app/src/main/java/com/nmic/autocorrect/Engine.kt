@@ -97,8 +97,9 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
             // Texting shorthand ("u", "pls", "ik") is only spelled out when the tone asks for it; otherwise it stands.
             ?: if (expandsShorthand()) library.optJSONObject("shorthand")?.optJSONObject(bare) else null
         val neverLib = library.optJSONArray("never")?.let { a -> (0 until a.length()).any { a.optString(it) == bare } } ?: false
-        val table = TextUtil.commonTypos[lang]?.get(bare) ?: if (learned != null && !neverLib && (learned.optString("lang", lang) == lang)) learned.optString("to") else null
-        if (table != null && !never.contains(w.word.lowercase())) {
+        val mine = prefs.myWords[bare]
+        val table = mine ?: TextUtil.commonTypos[lang]?.get(bare) ?: if (learned != null && !neverLib && (learned.optString("lang", lang) == lang)) learned.optString("to") else null
+        if (table != null && (mine != null || !never.contains(w.word.lowercase()))) {
             apply(w.word, TextUtil.transferCase(w.word, table), tail, "typo", before.substring(0, w.start))
             flushPendingForeign(lang, before)
             resolveLate()
@@ -205,6 +206,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
     private fun contextPass(window: String, lang: String, paused: Boolean = false, prefilter: Boolean = false) {
         val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", !prefilter).put("paused", paused)
+        // A language chosen by hand means "this is what I write in": a finished sentence in the other one is translated.
+        if (paused && prefs.lang != "auto") body.put("chosenLang", prefs.lang)
         contextPasses++
         inflight.incrementAndGet()
         api.pool.execute {
@@ -223,7 +226,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
                     val original = rewrite.optString("original"); val to = rewrite.optString("to"); val offset = rewrite.optInt("offset", -1)
                     val abs = windowStart + offset
                     if (original.isNotEmpty() && to.isNotEmpty() && abs >= 0 && abs + original.length <= before.length && before.substring(abs, abs + original.length) == original) {
-                        if (applyIfIntact(original, to, before.substring(0, abs), "rewrite")) return@post
+                        if (applyIfIntact(original, to, before.substring(0, abs), if (rewrite.optString("kind") == "translate") "translate" else "rewrite")) return@post
                     }
                 }
                 // Apply from the end so earlier offsets stay valid.

@@ -78,7 +78,7 @@ const TONE_GUIDE: Record<string, string> = {
   casual: "Target tone: casual. Also propose a replacement for a single word that is stiff or bureaucratic where an everyday word exists (e.g. 'utilize' -> 'use', 'commence' -> 'start').",
   friendly: "Target tone: friendly. Also propose a warmer everyday word for a single word that is cold or bureaucratic.",
   academic: "Target tone: academic. Also propose a precise term for a single word that is colloquial, vague, or an unhedged absolute.",
-  concise: "Target tone: concise. Also propose the shorter, plainer word for a single word that is needlessly long or ornate (e.g. 'utilize' -> 'use', 'approximately' -> 'about').",
+  concise: "Target tone: concise. Also propose the shorter form for anything padded: a needlessly long word ('utilize' -> 'use', 'approximately' -> 'about') AND a wordy phrase of up to 3 words that a shorter phrase says just as well ('the reason for that is that' -> 'because', 'in order to' -> 'to', 'at this point in time' -> 'now', 'due to the fact that' -> 'since'). Cutting words is the point of this tone, so propose these freely.",
 };
 
 const TONE_MODE = `TONE MODE: a target tone is set, so be assertive about register. Besides errors, propose a replacement for EVERY word or short phrase (up to 3 words) that a careful editor would change to fit the tone: slang, casual intensifiers, vague fillers (stuff, things, a lot, a bunch of), contractions when the tone is formal, stiff or bureaucratic words when the tone is casual or friendly, needlessly long words when the tone is concise. Up to 5 proposals. Each proposal is still a single replacement span: "original" is the exact words in the window (1-3 words) and the alternative is the phrase that replaces them. Do not change names, quotes, numbers, or the last two words.`;
@@ -118,6 +118,40 @@ export async function rewriteSentence(sentence: string, lang: string, timeoutMs 
     const keepRatio = tone === "as-written" ? 0.6 : 0.4; // a tone may legitimately reword more
     if (a.length < 4 || kept / a.length < keepRatio || b.length > a.length * 1.6 + 2 || b.length < a.length * 0.5) return null;
     return { to, reason: String(parsed.reason ?? "").slice(0, 60) };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
+ * Translate one finished sentence into the language the writer picked, keeping their register and meaning. Used when
+ * a language is chosen explicitly (not Auto) and the sentence was written in the other one.
+ */
+export async function translateSentence(sentence: string, to: string, tone = "as-written", timeoutMs = 6000): Promise<{ to: string; reason: string } | null> {
+  if (!anthropicConfigured()) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": anthropicKey(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 400,
+        system: [{ type: "text", text: `You translate one sentence someone just typed on a phone into ${LANG_NAME[to] ?? to}. Keep their meaning, their register (a text message stays a text message) and their punctuation habits: never introduce an em dash, an en dash or an ellipsis character. Keep names, numbers, code and anything in quotation marks exactly as typed. If the sentence is already in ${LANG_NAME[to] ?? to}, or you cannot tell, set confident=false. Answer with JSON only: {"translation":"...","confident":true}`, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: `${tone !== "as-written" ? `Target tone: ${tone}.\n` : ""}Sentence: ${sentence}` }],
+      }),
+      signal: ctrl.signal,
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw new HaikuError(`Anthropic HTTP ${res.status}`, res.status, json);
+    const text = ((json.content as Array<{ type: string; text?: string }>) ?? []).find((c) => c.type === "text")?.text ?? "";
+    const m = /\{[\s\S]*\}/.exec(text);
+    const parsed = JSON.parse(m ? m[0] : text) as { translation?: unknown; confident?: unknown };
+    const out = typeof parsed.translation === "string" ? parsed.translation.trim() : "";
+    if (!out || parsed.confident !== true || out === sentence.trim() || /[\r\n<>]/.test(out) || out.length > sentence.length * 2 + 20) return null;
+    return { to: out, reason: `translated to ${LANG_NAME[to] ?? to}` };
   } finally {
     clearTimeout(t);
   }

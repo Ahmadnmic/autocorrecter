@@ -1,9 +1,10 @@
 // Pass C: better word in context. Jev pre-filter -> Haiku proposes -> Jev gates.
 import { NextResponse } from "next/server";
 import { jevConfigured, jevDecide, JevError } from "@/lib/jev";
-import { anthropicConfigured, proposeImprovements, rewriteSentence, HaikuError } from "@/lib/haiku";
+import { anthropicConfigured, proposeImprovements, rewriteSentence, translateSentence, HaikuError } from "@/lib/haiku";
 import { thresholds } from "@/lib/thresholds";
 import { nthWordOccurrence, transferCase, type Lang } from "@/lib/text";
+import { detectLangByDictionary } from "@/lib/spell";
 import { introducesMachinePunctuation, isSlop } from "@/lib/slop";
 import { logEvent, scrub } from "@/lib/log";
 import { checkSecret, num, rateLimit, readJson, spendBudget, str, NO_STORE } from "@/lib/guard";
@@ -11,7 +12,7 @@ import { checkSecret, num, rateLimit, readJson, spendBudget, str, NO_STORE } fro
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean; paused?: boolean; fmt?: string };
+type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean; paused?: boolean; fmt?: string; chosenLang?: string };
 const TONES = new Set(["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"]);
 
 /** The last complete sentence of the window (5+ words), with its offset, or null. */
@@ -63,6 +64,29 @@ export async function POST(req: Request) {
     // On a pause the last sentence is finished: alongside the word proposals, ask for a minimal rewrite when it does
     // not read as a coherent line. Both calls run at the same time.
     const lastSentence = body.paused === true ? lastSentenceOf(window) : null;
+    // A language chosen by hand (not Auto) means: this is what I am writing in. A finished sentence in the other
+    // language is translated whole, instead of word by word.
+    const chosen = body.chosenLang === "en" || body.chosenLang === "da" ? body.chosenLang : null;
+    if (chosen && lastSentence) {
+      const detected = await detectLangByDictionary(lastSentence.text, 400);
+      if (detected.lang && detected.lang !== chosen) {
+        const tr = await translateSentence(lastSentence.text, chosen, tone).catch(() => null);
+        if (tr) {
+          const g = await jevDecide(
+            { task: "Inline autocorrect. The writer picked a language by hand and typed a sentence in the other one, so it was translated. Approve only a faithful translation that keeps their meaning and register.", target_language: chosen, original_sentence: lastSentence.text, translation: tr.to },
+            {
+              choice: { type: "choice", instructions: "Which should stand in the writer's message?", criteria: { keep_original: "Keep the sentence as typed.", use_translation: "Use the translation." } },
+              faithful: { type: "noul", instructions: "Is the translation faithful: same meaning, same register, nothing added or dropped?" },
+            },
+          );
+          const conf = g.choice?.confidence ?? 0;
+          if (g.choice?.choice === "use_translation" && conf >= 0.7 && (g.faithful?.noul ?? 0) >= 0.75) {
+            logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone, chosenLang: chosen }, out: { translated: scrub(tr.to).slice(0, 120), confidence: conf } });
+            return NextResponse.json({ approved: [], rewrite: { original: lastSentence.text, offset: lastSentence.offset, to: tr.to, confidence: conf, reason: tr.reason, kind: "translate" }, ms: Date.now() - t0 }, { headers: NO_STORE });
+          }
+        }
+      }
+    }
     const [proposals, rewriteRaw] = await Promise.all([
       proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true, fmt),
       lastSentence ? rewriteSentence(lastSentence.text, lang, 5000, tone).catch(() => null) : Promise.resolve(null),
