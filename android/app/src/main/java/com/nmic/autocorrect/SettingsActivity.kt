@@ -60,7 +60,7 @@ class SettingsActivity : AppCompatActivity() {
             addView(inner)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
         }
-        fun button(t: String, tonal: Boolean = false, onClick: () -> Unit) = MaterialButton(this, null, if (tonal) com.google.android.material.R.attr.materialButtonTonalStyle else com.google.android.material.R.attr.materialButtonStyle).apply { text = t; cornerRadius = dp(20); setOnClickListener { onClick() } }
+        fun button(t: String, tonal: Boolean = false, onClick: () -> Unit) = MaterialButton(this, null, if (tonal) com.google.android.material.R.attr.materialButtonOutlinedStyle else com.google.android.material.R.attr.materialButtonStyle).apply { text = t; cornerRadius = dp(20); setOnClickListener { onClick() } }
         fun row(vararg views: View) = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; views.forEach { v -> addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) }) } }
 
         root.addView(title("Inline Autocorrect"))
@@ -195,7 +195,7 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(card(heading("Corrections"), aggrLabel, slider, langLabel, langGroup, langHint, toneLabel, toneGroup, toneHint))
 
         // ---- Try it
-        val tryBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Type here: I definately recieved it ,and woyou please look"; boxCornerRadiusTopStart = dp(14).toFloat(); boxCornerRadiusTopEnd = dp(14).toFloat(); boxCornerRadiusBottomStart = dp(14).toFloat(); boxCornerRadiusBottomEnd = dp(14).toFloat() }
+        val tryBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Type here: I definately recieved it ,and woyou please look"; setBoxCornerRadii(dp(14).toFloat(), dp(14).toFloat(), dp(14).toFloat(), dp(14).toFloat()) }
         tryBox.addView(TextInputEditText(tryBox.context).apply { minLines = 3; gravity = Gravity.TOP })
         root.addView(card(heading("Try it"), tryBox))
 
