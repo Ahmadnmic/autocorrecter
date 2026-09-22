@@ -65,7 +65,12 @@ class SettingsActivity : AppCompatActivity() {
         fun row(vararg views: View) = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; views.forEach { v -> addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) }) } }
 
         root.addView(title("Inline Autocorrect"))
-        root.addView(body("Version $version").apply { setPadding(dp(4), 0, 0, dp(16)) })
+        val helpBtn = button("Help", tonal = true) { showWelcome(prefs) }
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, 0, dp(12))
+            addView(body("Version $version"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(helpBtn)
+        })
 
         // ---- Status + keyboard switch
         val status = body("", dim = false)
@@ -201,11 +206,10 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(card(heading("Try it"), tryBox))
 
         // ---- Spell checker + server
-        val helpBtn = button("How it works", tonal = true) { showWelcome(prefs) }
         val spellBtn = button("Open spell checker settings", tonal = true) { try { startActivity(Intent("android.settings.SPELL_CHECKER_SETTINGS")) } catch (e: Exception) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } }
         val serverBox = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply { hint = "Server (HTTPS)" }
         serverBox.addView(TextInputEditText(serverBox.context).apply { setText(prefs.apiBase); setOnFocusChangeListener { _, f -> if (!f) prefs.apiBase = text.toString().trim() } })
-        root.addView(card(heading("More"), helpBtn, body("The spell checker works with any keyboard: typos are underlined and a tap accepts the suggestion. Settings → System → Languages → Spell checker."), spellBtn, serverBox, body("Text near the cursor is sent to the server for decisions. Passwords, numbers, e-mail, URL and incognito fields are never touched.")))
+        root.addView(card(heading("More"), body("The spell checker works with any keyboard: typos are underlined and a tap accepts the suggestion. Settings → System → Languages → Spell checker."), spellBtn, serverBox, body("Text near the cursor is sent to the server for decisions. Passwords, numbers, e-mail, URL and incognito fields are never touched.")))
 
         setContentView(ScrollView(this).apply { addView(root); isVerticalScrollBarEnabled = false; fitsSystemWindows = true })
         if (!prefs.welcomed) showWelcome(prefs)
