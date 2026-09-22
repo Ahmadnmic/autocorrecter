@@ -27,17 +27,18 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     val changes = ArrayList<Change>()
     private val never = HashSet<String>(prefs.never)
     private val unresolved = LinkedHashMap<String, Unresolved>()
-    private var unresolvedSeq = 0
+    private var unresolvedSeq = 0 // ids must survive the server's sanitiser ([A-Za-z0-9_:.-]), so they are plain counters
     private val inflight = java.util.concurrent.atomic.AtomicInteger(0)
     /** True while anything is still being decided or waiting for more text: the strip shows a red dot until it is false. */
-    fun busy(): Boolean = inflight.get() > 0 || contextInflight || resolving || unresolved.isNotEmpty() || pendingForeign != null // ids must survive the server's sanitiser ([A-Za-z0-9_:.-]), so they are plain counters
+    fun busy(): Boolean = inflight.get() > 0 || contextPasses > 0 || resolving || unresolved.isNotEmpty() || pendingForeign != null
     private data class Unresolved(val word: String, val leftAnchor: String, var tries: Int = 0)
     private var lang: String? = null
     private var langProbe = 0
     private var wordsSinceContext = 0
-    private var contextInflight = false
+    private var contextPasses = 0
     private var lastContextWindow = ""
     private var lastContextAt = 0L
+    private var lastPausedWindow = ""
     @Volatile var library: JSONObject = JSONObject().put("entries", JSONObject()).put("never", JSONArray())
     private val logQueue = ArrayList<JSONObject>()
     private var logScheduled = false
@@ -117,7 +118,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         wordsSinceContext++
         val boundary = before.lastOrNull() ?: ' '
         val window = before.takeLast(600)
-        val wantContext = !contextInflight && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 3 && (wordsSinceContext >= 2 || boundary in ".!?") && System.currentTimeMillis() - lastContextAt > 1200
+        val wantContext = contextPasses == 0 && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 3 && (wordsSinceContext >= 2 || boundary in ".!?") && System.currentTimeMillis() - lastContextAt > 1200
         if (typos.length() == 0) flushPendingForeign(lang, before) // the new word is not one the server checks; the earlier foreign word stands alone
         if (typos.length() == 0 && recheck.length() == 0) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
@@ -125,7 +126,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val body = JSONObject().put("client", "android").put("session", prefs.session).put("device", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
         if (probe) body.put("doc", before)
         // The context pass runs alongside the batched call, not after it: the server's own pre-filter gates Haiku.
-        if (wantContext) { wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextInflight = true; contextPass(window, lang, paused = false, prefilter = true) }
+        if (wantContext) { wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextPass(window, lang, paused = false, prefilter = true) }
         val anchorLeft = before.substring(0, w.start)
         inflight.incrementAndGet()
         api.pool.execute {
@@ -170,10 +171,11 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         val before = io.textBeforeCursor(600)
         flushPendingForeign(currentLang(before), before)
         resolveLate(paused = true)
-        if (contextInflight) return
         val window = before.takeLast(600)
-        if (window == lastContextWindow || window.trim().split(Regex("\\s+")).size < 3) return
-        lastContextWindow = window; lastContextAt = System.currentTimeMillis(); wordsSinceContext = 0; contextInflight = true
+        // The paused pass has its own memory: the window is usually identical to the one the last space already
+        // checked, but only this call tells the server the sentence is finished (so it may repair it as a whole).
+        if (window == lastPausedWindow || window.trim().split(Regex("\\s+")).size < 3) return
+        lastPausedWindow = window; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); wordsSinceContext = 0
         contextPass(window, currentLang(before), paused = true)
     }
 
@@ -196,11 +198,12 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
     private fun contextPass(window: String, lang: String, paused: Boolean = false, prefilter: Boolean = false) {
         val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", !prefilter).put("paused", paused)
+        contextPasses++
         inflight.incrementAndGet()
         api.pool.execute {
             val res = try { api.post("/api/propose", body, 9000) } finally { inflight.decrementAndGet() }
             main.post {
-                contextInflight = false
+                contextPasses--
                 val approved = res?.optJSONArray("approved") ?: JSONArray()
                 val rewrite = res?.optJSONObject("rewrite")
                 if (approved.length() == 0 && rewrite == null) return@post
@@ -329,8 +332,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (tail.length > 500) return false
         if (!io.replaceBeforeCursor(c.to.length + tail.length, c.to.length, c.old)) return false
         c.reverted = true
-        never.add(c.old.lowercase())
-        prefs.never = never
+        // Single words go on the never-list; a whole-sentence repair is one-off and would only clutter it.
+        if (!c.old.contains(' ')) { never.add(c.old.lowercase()); prefs.never = never }
         log(JSONObject().put("kind", "reverted").put("old", c.old).put("to", c.to).put("changeKind", c.kind).put("lang", currentLang(before)))
         return true
     }
