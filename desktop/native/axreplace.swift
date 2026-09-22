@@ -14,12 +14,15 @@ import ApplicationServices
 import Foundation
 
 let args = CommandLine.arguments
-guard args.count == 4, let tailLen = Int(args[1]) else {
-    print("usage: axreplace <tailLength> <old> <new>")
+// "axreplace probe": exit 0 when the focused element supports in-place replacement, 2 otherwise.
+let probeOnly = args.count == 2 && args[1] == "probe"
+guard probeOnly || (args.count == 4 && Int(args[1]) != nil) else {
+    print("usage: axreplace <tailLength> <old> <new> | axreplace probe")
     exit(4)
 }
-let oldText = args[2]
-let newText = args[3]
+let tailLen = probeOnly ? 0 : Int(args[1])!
+let oldText = probeOnly ? "" : args[2]
+let newText = probeOnly ? "" : args[3]
 
 let system = AXUIElementCreateSystemWide()
 var focusedRef: CFTypeRef?
@@ -40,6 +43,12 @@ var rangeRef: CFTypeRef?
 guard AXUIElementCopyAttributeValue(focused, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success, let rangeRaw = rangeRef else {
     print("no selection")
     exit(2)
+}
+if probeOnly {
+    var textSettable: DarwinBoolean = false
+    AXUIElementIsAttributeSettable(focused, kAXSelectedTextAttribute as CFString, &textSettable)
+    print(textSettable.boolValue ? "ok" : "text not settable")
+    exit(textSettable.boolValue ? 0 : 2)
 }
 var caret = CFRange(location: 0, length: 0)
 guard AXValueGetValue(rangeRaw as! AXValue, .cfRange, &caret) else {

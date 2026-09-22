@@ -1,21 +1,21 @@
 {
-  "version": "0.1.7",
-  "notes": "0.1.7: Windows corrections verified in place through UI Automation (separate helper, timeouts, read-back check), typing method and last result shown in Settings, typer.log for diagnostics.",
+  "version": "0.1.8",
+  "notes": "0.1.8: no more caret sweeps. Each field is probed for in-place editing before a correction; fields without it only get the word just typed corrected, during a pause in typing. Helper quarantine fix.",
   "assets": {
     "darwin-arm64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.7-mac-apple-silicon.zip",
-      "sha256": "b9aba9a7b13f1e5ae10f404e4186d94aa58adb6ddad2f19cc38f1f38ec617365",
-      "size": 127264891
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.8-mac-apple-silicon.zip",
+      "sha256": "a46b27caf2cb934f7d99628df3ca2ee2d3c3c9461150f5e6444886f6d293561f",
+      "size": 127266282
     },
     "darwin-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.7-mac-intel.zip",
-      "sha256": "7a5164915b7495ad984003b2d10ed165d0d5c6ee124562f392335c01f3e0662e",
-      "size": 134262532
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.8-mac-intel.zip",
+      "sha256": "2363d48e4e6055a0eb10f86dbb6ab4d5d1f488f91262a1a94191506c521e33ae",
+      "size": 134263928
     },
     "win32-x64": {
-      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.7-windows-x64.zip",
-      "sha256": "7a650a571b348bca8f669b9f3440995f72c93a430728741ddf74bb1163241715",
-      "size": 158666243
+      "url": "https://evlfmdcukru3eear.public.blob.vercel-storage.com/downloads/inline-autocorrect-0.1.8-windows-x64.zip",
+      "sha256": "5e445a0f7326f9c8ae4e87d72033de086949e362ffc137e95504e452eeab3cb0",
+      "size": 158667632
     },
     "android": "https://github.com/Ahmadnmic/autocorrecter/releases/latest/download/inline-autocorrect.apk"
   }

@@ -6,9 +6,10 @@ const { grammarFix } = require("./vendor/grammar.js");
 
 // How far back from the caret a keystroke-based typer may edit (it moves the caret there and back). An atomic typer
 // (Accessibility replace) edits in place, so it may reach the whole window.
-const MAX_TAIL = 48;
+const MAX_TAIL = 48; // decision-time bound for a keystroke typer (the word just typed, at most)
 const MAX_TAIL_CONTEXT = 90;
 const MAX_TAIL_ATOMIC = 600;
+const MAX_TAIL_KEYS = 8; // at apply time, a keystroke typer only ever touches the word just typed: no sweeping back
 
 class Engine {
   /**
@@ -167,16 +168,27 @@ class Engine {
   }
 
   async rewriteNow(start, old, to, kind, version) {
-    // A keystroke-based typer edits during a short quiet moment (a keystroke's gap) so its keys never land between
-    // the user's own. An atomic typer (Accessibility replace) needs no wait: it edits the exact range in place.
-    if (!this.apply.atomic) for (let waited = 0; Date.now() - this.lastKeyAt < 90 && waited < 1500; waited += 30) await new Promise((r) => setTimeout(r, 30));
+    // Can this field be edited in place (Accessibility / UI Automation)? Then no wait is needed: the exact range is
+    // replaced atomically. Otherwise keystrokes are used, and only for the word just typed, during a real pause
+    // in typing, so our keys never land between the user's own.
+    let atomic = !!this.apply.atomic;
+    if (atomic && this.apply.probe) atomic = await this.apply.probe();
+    if (!atomic) {
+      for (let waited = 0; Date.now() - this.lastKeyAt < 220 && waited < 2000; waited += 30) await new Promise((r) => setTimeout(r, 30));
+      if (this.resetVersion > version) return false;
+      if (this.buf.slice(start, start + old.length) !== old) return false;
+      if (this.buf.length - (start + old.length) > MAX_TAIL_KEYS) {
+        this.log(`skipped ${kind} "${old}": field has no in-place editing and the word is ${this.buf.length - (start + old.length)} chars back`);
+        return false;
+      }
+    }
     if (this.resetVersion > version) return false; // the field changed (click, Enter, arrow) since this was decided
     if (this.buf.slice(start, start + old.length) !== old) return false;
     const tail = this.buf.slice(start + old.length);
-    if (old.length + tail.length > this.maxTail(kind)) return false;
+    if (old.length + tail.length > (atomic ? MAX_TAIL_ATOMIC : MAX_TAIL_KEYS)) return false;
     this.applying = true;
     try {
-      const ok = await this.apply({ tail: tail.length, old, to });
+      const ok = await this.apply({ tail: tail.length, old, to, atomic });
       if (!ok) {
         this.log("apply refused: text not where expected, resetting");
         this.reset("desync");

@@ -26,6 +26,10 @@ function macTyper(opts = {}) {
   const esc = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const helper = helperPath();
   let helperOk = fs.existsSync(helper);
+  // A helper unpacked from a downloaded zip carries the quarantine flag, and Gatekeeper then refuses to run it.
+  try {
+    if (helperOk) execFile("xattr", ["-d", "com.apple.quarantine", helper], () => {});
+  } catch {}
   const last = { method: "", result: "", ms: 0, at: 0 };
   const log = (m) => {
     if (!opts.logFile) return;
@@ -53,7 +57,20 @@ function macTyper(opts = {}) {
         resolve(`unsupported:${why || code}`);
       });
     });
-  const type = async ({ tail, old, to }) => {
+  /** Does the focused field accept in-place replacement right now? Cheap (a few ms); asked before every edit. */
+  type.probe = () =>
+    new Promise((resolve) => {
+      if (!helperOk) return resolve(false);
+      execFile(helper, ["probe"], { timeout: 500 }, (err, stdout) => {
+        const code = err ? err.code : 0;
+        if (typeof code !== "number") {
+          helperOk = false;
+          log(`helper cannot run: ${err?.message}`);
+        } else if (code !== 0) log(`probe: ${String(stdout).trim() || code}`);
+        resolve(code === 0);
+      });
+    });
+  const type = async ({ tail, old, to, atomic = true }) => {
     const text = clean(to);
     const t0 = Date.now();
     const finish = (method, result, ok) => {
@@ -61,10 +78,10 @@ function macTyper(opts = {}) {
       log(`${method}: tail=${tail} "${old}" -> "${text}" => ${result} (${last.ms} ms)`);
       return ok;
     };
-    const r = await ax(tail, old, text);
+    const r = atomic ? await ax(tail, old, text) : "unsupported:probe";
     if (r === "ok") return finish("accessibility", "ok", true);
     if (r.startsWith("desync")) return finish("accessibility", r, false);
-    log(`accessibility unavailable (${r}); using keys`);
+    if (atomic) log(`accessibility unavailable (${r}); using keys`);
     // Fallback: caret left over the tail, select the word backwards, type over the selection, caret back.
     const lines = [];
     if (tail > 0) lines.push(`repeat ${Math.min(tail, 200)} times`, "key code 123", "end repeat");
