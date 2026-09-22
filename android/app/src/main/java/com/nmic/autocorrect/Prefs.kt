@@ -12,6 +12,8 @@ class Prefs(ctx: Context) {
     // Only HTTPS endpoints: typed text must never leave the phone in clear.
     var apiBase: String get() = p.getString("api", DEFAULT_API)!!.let { if (it.startsWith("https://")) it else DEFAULT_API }
         set(v) = p.edit().putString("api", if (v.startsWith("https://")) v.trimEnd('/') else DEFAULT_API).apply()
+    /** Words the writer reverted on this phone: never corrected again here, even before the server profile catches up. */
+    var never: Set<String> get() = p.getStringSet("never", emptySet()) ?: emptySet(); set(v) = p.edit().putStringSet("never", v.take(500).toSet()).apply()
     var session: String get() = p.getString("session", null) ?: java.util.UUID.randomUUID().toString().take(8).also { p.edit().putString("session", it).apply() }
         set(v) = p.edit().putString("session", v).apply()
 }

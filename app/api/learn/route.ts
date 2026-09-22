@@ -9,6 +9,7 @@ import { delPrivate, listPrivate, privateEnabled, putPrivate, readPrivateJson } 
 import { anthropicConfigured, anthropicKey } from "@/lib/haiku";
 import { loadLibrary, saveLibrary, type Library } from "@/lib/library";
 import type { LogEvent } from "@/lib/log";
+import { loadProfile, saveProfile, type Profile } from "@/lib/profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,6 +139,45 @@ export async function GET(req: Request) {
     cands.push({ typed, to, n, lang: a.lang, kind: [...a.kinds].join("/"), context: a.contexts[0] ?? "" });
   }
 
+  // 2b. per-device profiles: one revert is enough for that writer; a correction kept twice on that device is theirs.
+  const perDevice = new Map<string, { never: Set<string>; kept: Map<string, { to: Record<string, number>; lang: string }>; n: number }>();
+  for (const ev of events) {
+    if (!ev.device) continue;
+    const i = (ev.in ?? {}) as { old?: string; to?: string; changeKind?: string };
+    if (!i.old || !i.to) continue;
+    const k = key(i.old);
+    if (!/^[\p{L}'’-]{2,24}$/u.test(k) || i.changeKind === "grammar" || i.changeKind === "complete" || i.changeKind === "diag") continue;
+    const d = perDevice.get(ev.device) ?? { never: new Set<string>(), kept: new Map(), n: 0 };
+    d.n++;
+    if (ev.kind === "reverted") d.never.add(k);
+    else if (ev.kind === "applied" || ev.kind === "resolved") {
+      const e = d.kept.get(k) ?? { to: {}, lang: ev.lang ?? "en" };
+      e.to[i.to] = (e.to[i.to] ?? 0) + 1;
+      d.kept.set(k, e);
+    }
+    perDevice.set(ev.device, d);
+  }
+  let profilesUpdated = 0;
+  for (const [device, d] of perDevice) {
+    const p: Profile = (await loadProfile(device, 0)) ?? { device, updatedAt: "", never: [], entries: {}, events: 0 };
+    const never = new Set(p.never);
+    for (const w of d.never) { never.add(w); delete p.entries[w]; }
+    for (const [typed, e] of d.kept) {
+      if (never.has(typed)) continue;
+      const [to, n] = Object.entries(e.to).sort((a, b) => b[1] - a[1])[0];
+      const prev = p.entries[typed];
+      const total = n + (prev?.to === to ? prev.n : 0);
+      if (total >= 2) p.entries[typed] = { to, n: total, lang: e.lang, note: "personal" };
+      else if (!prev) p.entries[typed] = { to, n: total, lang: e.lang, note: "seen once" }; // remembered, applied once it reaches 2
+    }
+    // entries below support are kept only as counters; the client applies those with n >= 2
+    p.never = [...never];
+    p.events += d.n;
+    p.updatedAt = new Date().toISOString();
+    await saveProfile(p);
+    profilesUpdated++;
+  }
+
   // 3. vet once per batch, promote
   const verdicts = await vetWithHaiku(cands.slice(0, 60));
   let added = 0;
@@ -166,7 +206,7 @@ export async function GET(req: Request) {
   await saveState(state);
 
   const pruned = await pruneOldLogs().catch(() => 0);
-  const summary = { events: events.length, candidates: cands.length, added, neverCount: lib.never.length, libraryCount: lib.count, libraryVersion: lib.version, release, pruned, ms: Date.now() - t0 };
+  const summary = { events: events.length, candidates: cands.length, added, profilesUpdated, neverCount: lib.never.length, libraryCount: lib.count, libraryVersion: lib.version, release, pruned, ms: Date.now() - t0 };
   await putPrivate(`logs/learn/${new Date().toISOString().slice(0, 13)}.json`, JSON.stringify({ ...summary, at: new Date().toISOString(), rejected: cands.filter((c) => !verdicts[c.typed]?.ok).map((c) => ({ typed: c.typed, to: c.to, note: verdicts[c.typed]?.note })) })).catch(() => {});
   return NextResponse.json(summary);
 }

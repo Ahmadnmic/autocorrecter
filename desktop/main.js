@@ -10,7 +10,7 @@ const { makeKeyHandler } = require("./hook.js");
 
 const API_BASE = process.env.ICA_API_BASE || "https://inline-autocorrect.vercel.app";
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json");
-const defaults = { enabled: true, aggressiveness: 0.5, lang: "auto", tone: "as-written", overlay: true, overlayCorner: "bottom-right" };
+const defaults = { enabled: true, aggressiveness: 0.5, lang: "auto", tone: "as-written", overlay: true, overlayCorner: "bottom-right", device: "", never: [] };
 const TONES = ["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"];
 // Settings the renderer may change, with their validators. Anything else is ignored.
 const SETTING_RULES = {
@@ -21,6 +21,8 @@ const SETTING_RULES = {
   overlay: (v) => typeof v === "boolean",
   overlayCorner: (v) => ["bottom-right", "bottom-left", "top-right", "top-left"].includes(v),
   firstRun: (v) => typeof v === "boolean",
+  device: (v) => typeof v === "string" && /^[a-z0-9-]{4,32}$/i.test(v),
+  never: (v) => Array.isArray(v) && v.length <= 500 && v.every((w) => typeof w === "string" && w.length <= 40),
 };
 const UI_DIR = path.join(__dirname, "ui");
 const WEB_PREFS = { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false, navigateOnDragDrop: false };
@@ -240,6 +242,11 @@ app.on("web-contents-created", (_e, contents) => {
 app.whenReady().then(async () => {
   registerUiScheme();
   loadSettings();
+  // Persistent per-install id: the server keeps a writing profile per device (reverted words, corrections kept here).
+  if (!settings.device) {
+    settings.device = require("node:crypto").randomBytes(6).toString("hex");
+    saveSettings();
+  }
   if (process.platform === "darwin") app.dock?.hide();
   const trayIcon = process.platform === "darwin" ? nativeImage.createFromPath(path.join(__dirname, "assets", "trayTemplate.png")) : nativeImage.createFromPath(path.join(__dirname, "assets", "tray-win.png"));
   if (process.platform === "darwin") trayIcon.setTemplateImage(true);
@@ -255,6 +262,12 @@ app.whenReady().then(async () => {
   engine = new Engine({
     apiBase: API_BASE,
     settings: () => ({ enabled: settings.enabled, aggressiveness: settings.aggressiveness, lang: settings.lang, tone: settings.tone }),
+    device: settings.device,
+    never: settings.never,
+    onNever: (words) => {
+      settings.never = words.slice(-500);
+      saveSettings();
+    },
     apply: typer,
     secureField: typer.secureField,
     onChange: (c) => {
@@ -333,7 +346,7 @@ ipcMain.handle("revert", async (e, id) => {
   const tail = engine.buf.slice(ch.end);
   const ok = await engine.rewrite(ch.start, ch.to, ch.old, tail, "revert");
   if (ok) {
-    engine.never.add(c.old.toLowerCase());
+    engine.remember(c.old.toLowerCase());
     c.reverted = true;
     stats.reverted++;
     pushState();

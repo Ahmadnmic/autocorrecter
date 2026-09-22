@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Ev = { kind: string; old?: string; to?: string; changeKind?: string; lang?: string; left?: string; right?: string; confidence?: number; source?: string };
-type Body = { client?: string; session?: string; events: Ev[] };
+type Body = { client?: string; session?: string; device?: string; events: Ev[] };
 
 export async function POST(req: Request) {
   const limited = rateLimit(req, "log", 60, 30);
@@ -23,6 +23,7 @@ export async function POST(req: Request) {
       lang: oneOf(e.lang, ["en", "da"] as const, "en"),
       client: strHead(body.client, 16, "web").replace(/[^a-z-]/gi, ""),
       session: strHead(body.session, 32, "").replace(/[^a-z0-9-]/gi, ""),
+      device: strHead(body.device, 32, "").replace(/[^a-z0-9-]/gi, "") || undefined,
       in: { old: scrub(strHead(e.old, 80)), to: scrub(strHead(e.to, 80)), changeKind: strHead(e.changeKind, 16), left: scrub(strHead(e.left, 400)).slice(-160), right: scrub(strHead(e.right, 200)).slice(0, 120), confidence: num(e.confidence, 0, 1, 0), source: strHead(e.source, 16) },
     });
   }

@@ -200,7 +200,7 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
         val recent = engine.changes.take(6)
         if (recent.isEmpty()) { strip.addView(chip("Inline Autocorrect", "#5F6368", null)); return }
         for (ch in recent) {
-            val colour = when (ch.kind) { "typo" -> "#5F6368"; "recheck" -> "#B06000"; "translate" -> "#8E24AA"; "resolved" -> "#1A73E8"; "context" -> "#1A73E8"; "tone" -> "#00897B"; "grammar" -> "#E8710A"; else -> "#1A73E8" }
+            val colour = when (ch.kind) { "typo" -> "#5F6368"; "recheck" -> "#B06000"; "translate" -> "#8E24AA"; "resolved" -> "#1A73E8"; "context" -> "#1A73E8"; "tone" -> "#00897B"; "grammar" -> "#E8710A"; "rewrite" -> "#7B1FA2"; else -> "#1A73E8" }
             strip.addView(chip((if (ch.reverted) "↩ " else "") + "${ch.old} → ${ch.to}", if (ch.reverted) "#9AA0A6" else colour, if (ch.reverted) null else ch))
         }
     }

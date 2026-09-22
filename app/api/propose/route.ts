@@ -1,7 +1,7 @@
 // Pass C: better word in context. Jev pre-filter -> Haiku proposes -> Jev gates.
 import { NextResponse } from "next/server";
 import { jevConfigured, jevDecide, JevError } from "@/lib/jev";
-import { anthropicConfigured, proposeImprovements, HaikuError } from "@/lib/haiku";
+import { anthropicConfigured, proposeImprovements, rewriteSentence, HaikuError } from "@/lib/haiku";
 import { thresholds } from "@/lib/thresholds";
 import { nthWordOccurrence, transferCase, type Lang } from "@/lib/text";
 import { isSlop } from "@/lib/slop";
@@ -13,6 +13,17 @@ export const dynamic = "force-dynamic";
 
 type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean; paused?: boolean; fmt?: string };
 const TONES = new Set(["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"]);
+
+/** The last complete sentence of the window (5+ words), with its offset, or null. */
+function lastSentenceOf(window: string): { text: string; offset: number } | null {
+  const trimmed = window.replace(/\s+$/, "");
+  const m = /(?:^|[.!?\n]\s*)([^.!?\n]{12,})[.!?]?$/.exec(trimmed);
+  if (!m) return null;
+  const text = m[1].trim();
+  if (text.split(/\s+/).length < 5) return null;
+  const offset = trimmed.lastIndexOf(text);
+  return offset >= 0 ? { text, offset } : null;
+}
 
 export async function POST(req: Request) {
   const t0 = Date.now();
@@ -49,14 +60,44 @@ export async function POST(req: Request) {
     // Tone mode returns more proposals and runs longer; the function budget is 15 s.
     const tHaiku0 = Date.now();
     const fmt = body.fmt === "schema" || body.fmt === "free" ? body.fmt : undefined;
-    const proposals = await proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true, fmt);
+    // On a pause the last sentence is finished: alongside the word proposals, ask for a minimal rewrite when it does
+    // not read as a coherent line. Both calls run at the same time.
+    const lastSentence = body.paused === true ? lastSentenceOf(window) : null;
+    const [proposals, rewriteRaw] = await Promise.all([
+      proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true, fmt),
+      lastSentence ? rewriteSentence(lastSentence.text, lang).catch(() => null) : Promise.resolve(null),
+    ]);
     const tHaiku = Date.now() - tHaiku0;
+    let rewrite: { original: string; offset: number; to: string; confidence: number; reason: string } | undefined;
+    let rewriteWhy = rewriteRaw ? "" : lastSentence ? "haiku_none" : "no_sentence";
+    // Punctuation and capitals alone are not a repair (an SMS without a full stop is fine); the words must change.
+    const bare = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}'’ ]+/gu, " ").replace(/\s+/g, " ").trim();
+    if (lastSentence && rewriteRaw && bare(rewriteRaw.to) === bare(lastSentence.text)) rewriteWhy = "punctuation_only";
+    if (lastSentence && rewriteRaw && !rewriteWhy) {
+      const g = await jevDecide(
+        { task: "Inline autocorrect on a phone. A repair of one typed sentence was proposed. Approve only if it clearly says what the writer meant, more readably, without adding or changing meaning.", language: lang, original_sentence: lastSentence.text, proposed_sentence: rewriteRaw.to, proposer_reason: rewriteRaw.reason },
+        {
+          choice: { type: "choice", instructions: "Which should stand in the writer's message?", criteria: { keep_original: "Keep the original sentence.", use_rewrite: "Use the proposed sentence." } },
+          meaning: { type: "noul", instructions: "Does the proposed sentence keep exactly the writer's intended meaning?" },
+          needed: { type: "noul", instructions: "Was the original sentence hard to read or ungrammatical, so that a repair is needed at all?" },
+        },
+      );
+      const conf = g.choice?.confidence ?? 0;
+      // A repair is a bigger, visible, revertible edit on a sentence that already reads badly, so the bar is a little
+      // lower than for a silent word swap; "needed" keeps fine sentences untouched.
+      if (g.choice?.choice === "use_rewrite" && conf >= T.ctx - 0.15 && (g.meaning?.noul ?? 0) >= 0.65 && (g.needed?.noul ?? 0) >= 0.6) rewrite = { original: lastSentence.text, offset: lastSentence.offset, to: rewriteRaw.to, confidence: conf, reason: rewriteRaw.reason };
+      else rewriteWhy = `gate choice=${g.choice?.choice} conf=${conf} meaning=${g.meaning?.noul} needed=${g.needed?.noul}`;
+    }
+    const rewriteDebug = body.debug === true && !checkSecret(req, "ADMIN_SECRET") ? { sentence: lastSentence?.text, raw: rewriteRaw, why: rewriteWhy } : undefined;
     // Hard anti-slop filter: no banned alternative ever reaches the gate, whatever the model said.
     const located = proposals
       // Model output is untrusted: alternatives must be short plain text, never line breaks or markup.
       .map((p) => ({ ...p, alternatives: p.alternatives.filter((a) => typeof a === "string" && a.length <= 40 && !/[\r\n<>]/.test(a) && !isSlop(a)), offset: nthWordOccurrence(window, p.original, p.occurrence) }))
       .filter((p) => p.offset >= 0 && p.alternatives.length > 0);
-    if (located.length === 0) return NextResponse.json({ approved: [], why: "no_proposals", worth, ms: Date.now() - t0, t: { haiku: tHaiku } });
+    if (located.length === 0) {
+      if (rewrite) logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone, paused: true }, out: { rewrite: { original: scrub(rewrite.original), to: scrub(rewrite.to), confidence: rewrite.confidence } } });
+      return NextResponse.json({ approved: [], rewrite, why: rewrite ? undefined : "no_proposals", worth, ms: Date.now() - t0, t: { haiku: tHaiku }, rewriteDebug });
+    }
 
     // 3. Jev gates each proposal.
     const state: Record<string, unknown> = { task: "Inline autocorrect gate. A proposer suggested word replacements. Approve only replacements the author would clearly want; when in doubt keep the original." + toneNote, language: lang, tone, window };
@@ -104,7 +145,13 @@ export async function POST(req: Request) {
       })
       .filter((x): x is NonNullable<typeof x> => !!x);
     logEvent({ route: "propose", ms: Date.now() - t0, lang, in: { window: scrub(window).slice(-240), tone }, out: { worth, proposed: located.map((p) => ({ original: scrub(p.original), alternatives: p.alternatives, category: p.category, reason: p.reason })), approved } });
-    return NextResponse.json({ approved, worth, proposed: located.length, ms: Date.now() - t0, t: { haiku: tHaiku, gate: tGate }, debug }, { headers: NO_STORE });
+    // A rewrite that only restates the approved word swaps adds nothing; the word swaps are the lighter edit.
+    if (rewrite) {
+      let withSwaps = lastSentence!.text;
+      for (const a of approved) withSwaps = withSwaps.replace(a.original, a.to);
+      if (bare(withSwaps) === bare(rewrite.to)) rewrite = undefined;
+    }
+    return NextResponse.json({ approved, rewrite, worth, proposed: located.length, ms: Date.now() - t0, t: { haiku: tHaiku, gate: tGate }, debug, rewriteDebug }, { headers: NO_STORE });
   } catch (e) {
     const err = e as JevError | HaikuError;
     console.error("propose failed:", err.message, (err as HaikuError).body ? JSON.stringify((err as HaikuError).body).slice(0, 300) : "");

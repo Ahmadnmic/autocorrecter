@@ -83,6 +83,45 @@ const TONE_GUIDE: Record<string, string> = {
 
 const TONE_MODE = `TONE MODE: a target tone is set, so be assertive about register. Besides errors, propose a replacement for EVERY word or short phrase (up to 3 words) that a careful editor would change to fit the tone: slang, casual intensifiers, vague fillers (stuff, things, a lot, a bunch of), contractions when the tone is formal, stiff or bureaucratic words when the tone is casual or friendly, needlessly long words when the tone is concise. Up to 5 proposals. Each proposal is still a single replacement span: "original" is the exact words in the window (1-3 words) and the alternative is the phrase that replaces them. Do not change names, quotes, numbers, or the last two words.`;
 
+/**
+ * Minimal rewrite of one finished sentence that does not read as a coherent line (word order, missing or extra
+ * words, agreement), keeping the writer's words and meaning. Returns null when the sentence is fine or unclear.
+ */
+export async function rewriteSentence(sentence: string, lang: string, timeoutMs = 5000): Promise<{ to: string; reason: string } | null> {
+  if (!anthropicConfigured()) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": anthropicKey(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 300,
+        system: [{ type: "text", text: `You repair one sentence someone just typed on a phone, in English or Danish. Make the SMALLEST edit that turns it into a grammatical, coherent sentence: fix word order, a missing or doubled word, agreement, or a word that is clearly the wrong one. Keep the writer's own words, meaning, register and language; never add information, never polish style, never change names or numbers. If the sentence is already fine, or you cannot tell what was meant, return it unchanged with confident=false. Answer with JSON only: {"rewrite":"...","confident":true,"reason":"<=6 words"}`, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: `Language: ${lang}\nSentence: ${sentence}` }],
+      }),
+      signal: ctrl.signal,
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw new HaikuError(`Anthropic HTTP ${res.status}`, res.status, json);
+    const text = ((json.content as Array<{ type: string; text?: string }>) ?? []).find((c) => c.type === "text")?.text ?? "";
+    const m = /\{[\s\S]*\}/.exec(text);
+    const parsed = JSON.parse(m ? m[0] : text) as { rewrite?: unknown; confident?: unknown; reason?: unknown };
+    const to = typeof parsed.rewrite === "string" ? parsed.rewrite.trim() : "";
+    if (!to || parsed.confident !== true || to === sentence.trim() || /[\r\n<>]/.test(to)) return null;
+    // Minimal means minimal: most of the original words must survive and the length must stay close.
+    const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}'’]+/u).filter(Boolean);
+    const a = words(sentence), b = words(to);
+    const kept = a.filter((w) => b.includes(w)).length;
+    if (a.length < 4 || kept / a.length < 0.6 || b.length > a.length * 1.5 + 2 || b.length < a.length * 0.6) return null;
+    return { to, reason: String(parsed.reason ?? "").slice(0, 60) };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 /** Output format: constrained JSON schema (guaranteed shape, slower) or plain JSON asked for in the prompt (faster). */
 export type HaikuFormat = "schema" | "free";
 export async function proposeImprovements(window: string, lang: string, tone = "as-written", timeoutMs = 6000, paused = false, format: HaikuFormat = (process.env.HAIKU_FORMAT as HaikuFormat) || "free"): Promise<Proposal[]> {

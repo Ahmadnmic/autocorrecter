@@ -25,7 +25,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
 
     private val main = Handler(Looper.getMainLooper())
     val changes = ArrayList<Change>()
-    private val never = HashSet<String>()
+    private val never = HashSet<String>(prefs.never)
     private val unresolved = LinkedHashMap<String, Unresolved>()
     private var unresolvedSeq = 0
     private val inflight = java.util.concurrent.atomic.AtomicInteger(0)
@@ -56,7 +56,8 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     private val keepVerdicts = HashMap<String, Int>() // word -> confident "keep" verdicts from re-checks
     private var pendingForeign: Pair<String, String>? = null // (word, anchorLeft) waiting for the next word before translating
 
-    fun refreshLibrary() = api.pool.execute { api.get("/api/library")?.let { library = it } }
+    /** The shared library plus this phone's own profile (reverted words, corrections kept here twice). */
+    fun refreshLibrary() = api.pool.execute { api.get("/api/library?device=" + prefs.session)?.let { library = it } }
 
     /**
      * Called after any character was committed (the character is the last one before the cursor). Runs the local
@@ -121,7 +122,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (typos.length() == 0 && recheck.length() == 0) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
         if (probe) langProbe = 0
-        val body = JSONObject().put("client", "android").put("session", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
+        val body = JSONObject().put("client", "android").put("session", prefs.session).put("device", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
         if (probe) body.put("doc", before)
         // The context pass runs alongside the batched call, not after it: the server's own pre-filter gates Haiku.
         if (wantContext) { wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextInflight = true; contextPass(window, lang, paused = false, prefilter = true) }
@@ -201,11 +202,20 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
             main.post {
                 contextInflight = false
                 val approved = res?.optJSONArray("approved") ?: JSONArray()
-                if (approved.length() == 0) return@post
+                val rewrite = res?.optJSONObject("rewrite")
+                if (approved.length() == 0 && rewrite == null) return@post
                 val before = io.textBeforeCursor(600)
                 val anchor = window.takeLast(80)
                 val windowStart = before.lastIndexOf(anchor).let { if (it < 0) -1 else it + anchor.length - window.length }
                 if (windowStart < 0) return@post
+                // A sentence repair (pause only) replaces the whole sentence; word fixes inside it are then moot.
+                if (rewrite != null) {
+                    val original = rewrite.optString("original"); val to = rewrite.optString("to"); val offset = rewrite.optInt("offset", -1)
+                    val abs = windowStart + offset
+                    if (original.isNotEmpty() && to.isNotEmpty() && abs >= 0 && abs + original.length <= before.length && before.substring(abs, abs + original.length) == original) {
+                        if (applyIfIntact(original, to, before.substring(0, abs), "rewrite")) return@post
+                    }
+                }
                 // Apply from the end so earlier offsets stay valid.
                 val items = (0 until approved.length()).map { approved.getJSONObject(it) }.sortedByDescending { it.optInt("offset") }
                 for (a in items) {
@@ -320,6 +330,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         if (!io.replaceBeforeCursor(c.to.length + tail.length, c.to.length, c.old)) return false
         c.reverted = true
         never.add(c.old.lowercase())
+        prefs.never = never
         log(JSONObject().put("kind", "reverted").put("old", c.old).put("to", c.to).put("changeKind", c.kind).put("lang", currentLang(before)))
         return true
     }
@@ -339,7 +350,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         main.postDelayed({
             logScheduled = false
             val events = JSONArray(ArrayList(logQueue)); logQueue.clear()
-            api.pool.execute { api.post("/api/log", JSONObject().put("client", "android").put("session", prefs.session).put("events", events)) }
+            api.pool.execute { api.post("/api/log", JSONObject().put("client", "android").put("session", prefs.session).put("device", prefs.session).put("events", events)) }
         }, 1500)
     }
 }

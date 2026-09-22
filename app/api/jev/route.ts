@@ -8,6 +8,7 @@ import { detectLangByDictionary, getSpeller } from "@/lib/spell";
 import { thresholds } from "@/lib/thresholds";
 import { COMMON_TYPOS, editDistance, shouldSkip, transferCase, type Lang } from "@/lib/text";
 import { loadLibrary, lookup } from "@/lib/library";
+import { applyProfile, deviceId, loadProfile } from "@/lib/profile";
 import { logEvent, scrub } from "@/lib/log";
 import { arr, id, num, oneOf, rateLimit, readJson, spendBudget, str, strHead, word, NO_STORE } from "@/lib/guard";
 
@@ -59,7 +60,8 @@ export async function POST(req: Request) {
   const longestLeft = [body.complete?.left, ...(body.typos ?? []).map((t) => t.left), ...(body.recheck ?? []).map((r) => r.left)].filter(Boolean).sort((a, b) => (b?.length ?? 0) - (a?.length ?? 0))[0] ?? "";
   const { lang, detected, conclusive } = await resolveLang(body.lang, longestLeft, body.doc);
   const other: Lang = lang === "en" ? "da" : "en";
-  const [speller, library] = await Promise.all([getSpeller(lang), loadLibrary()]);
+  const [speller, library0, profile] = await Promise.all([getSpeller(lang), loadLibrary(), loadProfile(deviceId((body as { device?: unknown }).device))]);
+  const library = applyProfile(library0, profile);
   let otherSpeller: Awaited<ReturnType<typeof getSpeller>> | null = null; // loaded only if a word is unknown here
 
   const questions: Record<string, JevQuestion> = {};

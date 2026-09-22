@@ -33,7 +33,9 @@ class Engine {
     this.version = 0;
     this.applying = false;
     this.pendingKeys = [];
-    this.never = new Set();
+    this.device = o.device || "";
+    this.never = new Set(Array.isArray(o.never) ? o.never : []);
+    this.onNever = o.onNever || (() => {});
     this.unresolved = new Map(); // id -> {start, word, tries}
     this.changes = []; // {start,end,old,to,kind}
     this.lang = null;
@@ -55,7 +57,7 @@ class Engine {
 
   async refreshLibrary() {
     try {
-      const r = await fetch(this.apiBase + "/api/library", { cache: "no-store" });
+      const r = await fetch(this.apiBase + "/api/library" + (this.device ? `?device=${encodeURIComponent(this.device)}` : ""), { cache: "no-store" });
       const lib = await r.json();
       if (lib && lib.entries) this.library = lib;
     } catch {}
@@ -73,8 +75,16 @@ class Engine {
       this.logTimer = null;
       const events = this.logQueue.splice(0, 50);
       if (!events.length) return;
-      this.post("/api/log", { client: "desktop", session: this.session, events }).catch(() => {});
+      this.post("/api/log", { client: "desktop", session: this.session, device: this.device, events }).catch(() => {});
     }, 1500);
+  }
+
+  /** A reverted word is never touched again, on this device, across restarts. */
+  remember(word) {
+    this.never.add(word);
+    try {
+      this.onNever([...this.never]);
+    } catch {}
   }
 
   reset(reason) {
@@ -256,6 +266,7 @@ class Engine {
     const body = {
       client: "desktop",
       session: this.session,
+      device: this.device,
       lang: probe ? "auto" : lang,
       doc: probe ? this.buf.slice(-4000) : undefined,
       aggressiveness: s.aggressiveness,

@@ -3,5 +3,5 @@
 body { margin:0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--ink); background: var(--bg); font-size: 13px; }
 .kind { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 2px 6px; border-radius: 10px; color: #fff; background: #5f6368; }
 .kind.typo { background:#5f6368 } .kind.recheck { background:#b06000 } .kind.context, .kind.resolved { background:var(--blue) }
-.kind.translate { background:#8e24aa } .kind.complete { background:#188038 } .kind.grammar { background:#e8710a } .kind.tone { background:#00897b } .kind.revert { background:#b3261e }
+.kind.translate { background:#8e24aa } .kind.complete { background:#188038 } .kind.grammar { background:#e8710a } .kind.tone { background:#00897b } .kind.rewrite { background:#7b1fa2 } .kind.revert { background:#b3261e }
 .diff s { color:#b3261e } .diff b { color:#188038 } .diff .arrow { color: var(--muted) }

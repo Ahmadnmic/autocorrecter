@@ -12,6 +12,7 @@ export type LogEvent = {
   lang?: string;
   client?: string; // web | desktop | android
   session?: string;
+  device?: string; // persistent per-install id, for the per-device profile
   in?: unknown;
   out?: unknown;
 };

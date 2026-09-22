@@ -54,7 +54,7 @@ class AutocorrectSpellChecker : SpellCheckerService() {
                 val proposed: JSONObject?
                 val extraOut: JSONObject
                 if (cached != null) { res = cached[0] as JSONObject?; proposed = cached[1] as JSONObject?; extraOut = (cached.getOrNull(2) as JSONObject?) ?: JSONObject() } else {
-                    val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("lang", lang).put("doc", text).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
+                    val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("device", prefs.session).put("lang", lang).put("doc", text).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
                     if (longEnough) body.put("prefilter", JSONObject().put("window", text.takeLast(900)))
                     res = api.post("/api/jev", body, 4000)
                     // Context pass: when Jev's pre-filter says the sentence holds a wrong word, Haiku proposes and Jev gates.
@@ -118,7 +118,7 @@ class AutocorrectSpellChecker : SpellCheckerService() {
 
         private fun check(word: String, left: String, right: String, lang: String): SuggestionsInfo? {
             if (TextUtil.shouldSkip(word)) return null
-            val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("lang", if (prefs.lang == "auto") "auto" else prefs.lang).put("aggressiveness", prefs.aggressiveness.toDouble())
+            val body = JSONObject().put("client", "android-spell").put("session", prefs.session).put("device", prefs.session).put("lang", if (prefs.lang == "auto") "auto" else prefs.lang).put("aggressiveness", prefs.aggressiveness.toDouble())
                 .put("typos", JSONArray().put(JSONObject().put("id", "w").put("word", word).put("left", left)))
             val res = api.post("/api/jev", body, 4000) ?: return null
             val d = res.optJSONArray("typos")?.optJSONObject(0) ?: return null
