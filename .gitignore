@@ -16,3 +16,9 @@ android/local.properties
 android/*.p12
 android/*.jks
 .claude/
+
+# Python service (Laya)
+services/laya/.venv/
+__pycache__/
+*.pyc
+data/laya/
