@@ -34,6 +34,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     private var wordsSinceContext = 0
     private var contextInflight = false
     private var lastContextWindow = ""
+    private var lastContextAt = 0L
     @Volatile var library: JSONObject = JSONObject().put("entries", JSONObject()).put("never", JSONArray())
     private val logQueue = ArrayList<JSONObject>()
     private var logScheduled = false
@@ -111,13 +112,13 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         wordsSinceContext++
         val boundary = before.lastOrNull() ?: ' '
         val window = before.takeLast(600)
-        val wantContext = !contextInflight && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 6 && (wordsSinceContext >= 4 || boundary in ".!?")
+        val wantContext = !contextInflight && window != lastContextWindow && window.trim().split(Regex("\\s+")).size >= 3 && (wordsSinceContext >= 2 || boundary in ".!?") && System.currentTimeMillis() - lastContextAt > 1200
         if (typos.length() == 0 && recheck.length() == 0 && !wantContext) { resolveLate(); return }
         val probe = prefs.lang == "auto" && (lang == null || langProbe++ >= 10)
         if (probe) langProbe = 0
         val body = JSONObject().put("client", "android").put("session", prefs.session).put("lang", if (probe) "auto" else lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("typos", typos).put("recheck", recheck)
         if (probe) body.put("doc", before)
-        if (wantContext) { body.put("prefilter", JSONObject().put("window", window)); wordsSinceContext = 0; lastContextWindow = window; contextInflight = true }
+        if (wantContext) { body.put("prefilter", JSONObject().put("window", window)); wordsSinceContext = 0; lastContextWindow = window; lastContextAt = System.currentTimeMillis(); contextInflight = true }
         val anchorLeft = before.substring(0, w.start)
         api.pool.execute {
             val res = api.post("/api/jev", body) ?: return@execute
@@ -155,9 +156,23 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
         }
     }
 
+    /**
+     * The writer paused (no key for a moment). Short messages end without a boundary after the last word, so run
+     * the context pass on the whole current text now, telling the server the window is complete.
+     */
+    fun onIdle() {
+        if (!prefs.enabled || contextInflight) return
+        val before = io.textBeforeCursor(600)
+        val window = before.takeLast(600)
+        if (window == lastContextWindow || window.trim().split(Regex("\\s+")).size < 3) return
+        lastContextWindow = window; lastContextAt = System.currentTimeMillis(); wordsSinceContext = 0; contextInflight = true
+        contextPass(window, currentLang(before), paused = true)
+        resolveLate(paused = true)
+    }
+
     /** Haiku proposes better words for the window, Jev gates them; approved ones are applied if the text is intact. */
-    private fun contextPass(window: String, lang: String) {
-        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", true)
+    private fun contextPass(window: String, lang: String, paused: Boolean = false) {
+        val body = JSONObject().put("window", window).put("lang", lang).put("aggressiveness", prefs.aggressiveness.toDouble()).put("tone", prefs.tone).put("skipPrefilter", true).put("paused", paused)
         api.pool.execute {
             val res = api.post("/api/propose", body, 9000)
             main.post {
@@ -190,7 +205,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
     }
 
     private var resolving = false
-    private fun resolveLate() {
+    private fun resolveLate(paused: Boolean = false) {
         if (resolving || unresolved.isEmpty()) return
         val before = io.textBeforeCursor(600)
         val items = JSONArray()
@@ -202,7 +217,7 @@ class Engine(private val prefs: Prefs, private val api: Api, private val io: IO)
             if (idx < 0 || u.tries >= 3) { it.remove(); continue }
             val after = before.substring(idx + u.leftAnchor.length + u.word.length)
             val wordsAfter = Regex("[\\p{L}'’-]+").findAll(after).count()
-            if (wordsAfter >= 2 || Regex("[.!?]").containsMatchIn(after)) {
+            if (wordsAfter >= 1 || paused || Regex("[.!?]").containsMatchIn(after)) {
                 ready.add(id to u)
                 items.put(JSONObject().put("id", id).put("word", u.word).put("left", before.substring(maxOf(0, idx + u.leftAnchor.length - 300), idx + u.leftAnchor.length)).put("right", after.take(200)))
             }

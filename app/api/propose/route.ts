@@ -11,7 +11,7 @@ import { checkSecret, num, rateLimit, readJson, spendBudget, str, NO_STORE } fro
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean };
+type Body = { window: string; lang?: Lang; aggressiveness?: number; tone?: string; skipPrefilter?: boolean; debug?: boolean; paused?: boolean };
 const TONES = new Set(["as-written", "neutral", "formal", "professional", "casual", "friendly", "academic", "concise"]);
 
 export async function POST(req: Request) {
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
 
     // 2. Haiku proposes.
     // Tone mode returns more proposals and runs longer; the function budget is 15 s.
-    const proposals = await proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000);
+    const proposals = await proposeImprovements(window, lang, tone, tone === "as-written" ? 6000 : 11000, body.paused === true);
     // Hard anti-slop filter: no banned alternative ever reaches the gate, whatever the model said.
     const located = proposals
       // Model output is untrusted: alternatives must be short plain text, never line breaks or markup.

@@ -5,11 +5,5 @@
         <item name="colorOnPrimary">#FFFFFF</item>
         <item name="colorPrimaryContainer">#D3E3FD</item>
         <item name="colorOnPrimaryContainer">#041E49</item>
-        <item name="colorSecondaryContainer">#E8EAED</item>
-        <item name="colorOnSecondaryContainer">#1F1F1F</item>
-        <item name="colorSurface">#FCFCFF</item>
-        <item name="colorSurfaceContainer">#F1F3F6</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

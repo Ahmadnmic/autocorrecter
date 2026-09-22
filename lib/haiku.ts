@@ -83,7 +83,7 @@ const TONE_GUIDE: Record<string, string> = {
 
 const TONE_MODE = `TONE MODE: a target tone is set, so be assertive about register. Besides errors, propose a replacement for EVERY word or short phrase (up to 3 words) that a careful editor would change to fit the tone: slang, casual intensifiers, vague fillers (stuff, things, a lot, a bunch of), contractions when the tone is formal, stiff or bureaucratic words when the tone is casual or friendly, needlessly long words when the tone is concise. Up to 5 proposals. Each proposal is still a single replacement span: "original" is the exact words in the window (1-3 words) and the alternative is the phrase that replaces them. Do not change names, quotes, numbers, or the last two words.`;
 
-export async function proposeImprovements(window: string, lang: string, tone = "as-written", timeoutMs = 6000): Promise<Proposal[]> {
+export async function proposeImprovements(window: string, lang: string, tone = "as-written", timeoutMs = 6000, paused = false): Promise<Proposal[]> {
   if (!anthropicConfigured()) throw new HaikuError("ANTHROPIC_API_KEY is not set", 503);
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -99,7 +99,7 @@ export async function proposeImprovements(window: string, lang: string, tone = "
         model: MODEL,
         max_tokens: tone === "as-written" ? 400 : 700,
         system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-        messages: [{ role: "user", content: `${TONE_GUIDE[tone] ? TONE_GUIDE[tone] + "\n" + TONE_MODE + "\n" : ""}Language: ${lang}\nWindow:\n${window}` }],
+        messages: [{ role: "user", content: `${TONE_GUIDE[tone] ? TONE_GUIDE[tone] + "\n" + TONE_MODE + "\n" : ""}${paused ? "The writer has paused, so the window is complete: the last two words may be proposed as well.\n" : ""}Language: ${lang}\nWindow:\n${window}` }],
         output_config: { format: { type: "json_schema", schema: SCHEMA } },
       }),
       signal: ctrl.signal,

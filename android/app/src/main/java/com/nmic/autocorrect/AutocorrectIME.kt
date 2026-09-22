@@ -75,9 +75,11 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
 
     private fun ic(): InputConnection? = currentInputConnection
 
+    private val idle = Runnable { engine.onIdle() }
     override fun onText(s: String) {
         val c = ic() ?: return
         c.commitText(s, 1)
+        main.removeCallbacks(idle); main.postDelayed(idle, 900)
         if (!secureField && prefs.enabled) {
             // Local grammar pass on every character (spacing, punctuation, capitals), then the word passes at a boundary,
             // synchronously and on a snapshot: the finished word is the one before this boundary, whatever comes next.
@@ -89,6 +91,7 @@ class AutocorrectIME : InputMethodService(), KeyboardView.Listener, Engine.IO {
 
     override fun onBackspace() {
         val c = ic() ?: return
+        main.removeCallbacks(idle); main.postDelayed(idle, 900)
         val sel = c.getSelectedText(0)
         if (!sel.isNullOrEmpty()) c.commitText("", 1) else c.deleteSurroundingText(1, 0)
         updateShift()
